@@ -80,9 +80,20 @@ def _is_heading(style, text):
     return False
 
 
-def _docx_paragraphs(file_url):
+def _read_docx_content(ref):
+    """Resolve a docx from a File id, a file_url, or (fallback) get_file.
+    Reading via the File doc avoids Unicode-filename path issues."""
+    if frappe.db.exists("File", ref):
+        return frappe.get_doc("File", ref).get_content()
+    fname = frappe.db.get_value("File", {"file_url": ref}, "name")
+    if fname:
+        return frappe.get_doc("File", fname).get_content()
     from frappe.utils.file_manager import get_file
-    _name, content = get_file(file_url)
+    return get_file(ref)[1]
+
+
+def _docx_paragraphs(file_url):
+    content = _read_docx_content(file_url)
     if isinstance(content, str):
         content = content.encode("utf-8", "ignore")
     from docx import Document
@@ -476,8 +487,7 @@ def import_revisions(project, file_url):
 # unified: import a whole reviewed translation (marked-up MN [+ optional EN])
 # --------------------------------------------------------------------------- #
 def _docx_zip(file_url):
-    from frappe.utils.file_manager import get_file
-    _n, content = get_file(file_url)
+    content = _read_docx_content(file_url)
     if isinstance(content, str):
         content = content.encode("utf-8", "ignore")
     return zipfile.ZipFile(io.BytesIO(content))
