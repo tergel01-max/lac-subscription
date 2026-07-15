@@ -91,6 +91,7 @@
 @media (max-width:900px){ .tp .tp-drawer.open{width:100%;position:absolute;right:0;top:0;bottom:0;box-shadow:var(--shadow)} .tp .tp-drawerinner{width:100%} }
 
 /* shared cards */
+.tp .tp-donebar{display:flex;align-items:center;justify-content:space-between;gap:10px;background:color-mix(in srgb,var(--s-Accepted) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--s-Accepted) 40%,var(--border));color:var(--s-Accepted);border-radius:12px;padding:9px 14px;font-weight:700;font-size:13px}
 .tp .tp-seghead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .tp .tp-seghead h2{margin:0;font-size:14px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
 .tp .tp-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:700}

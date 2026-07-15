@@ -93,7 +93,12 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div>${inner}</div>`;
     } else ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div><div class="body"><span class="nochange">Not generated yet — run the AI pass.</span></div></div>`;
+    const done = (s.status === 'Accepted' || s.status === 'Edited');
+    const doneBar = done
+      ? `<div class="tp-donebar"><span>✓ Finalized · ${s.status}</span><button class="tp-btn ghost" data-act="undo" style="padding:4px 11px;font-size:12px">↺ Undo</button></div>`
+      : '';
     return `
+      ${doneBar}
       <div class="tp-card en"><div class="lbl"><span class="name">Original · English</span></div><div class="body">${esc(s.source_text)}</div></div>
       <div class="tp-card"><div class="lbl"><span class="name">Translator draft</span><button class="tp-btn ghost" data-act="useDraft" style="padding:3px 9px;font-size:12px">Keep draft</button></div><div class="body">${esc(s.draft_text)}</div></div>
       ${ai}
@@ -184,6 +189,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     else if (act === 'useAlt') accept(s, s.ai_alternative);
     else if (act === 'useDraft') accept(s, s.draft_text);
     else if (act === 'toggleAlt') $id('tpAlt')?.classList.toggle('open');
+    else if (act === 'undo') { save(s, { status: s.ai_suggestion ? 'Suggested' : 'Pending', final_text: '' }); frappe.show_alert({ message: 'Reverted §' + s.seq, indicator: 'orange' }); }
     else if (act === 'saveFinal') { const v = $id('tpFinal').value; const st = (v.trim() === (s.ai_suggestion || '').trim() || v.trim() === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited'; save(s, { final_text: v, status: st }); frappe.show_alert({ message: 'Saved §' + s.seq, indicator: 'green' }); }
   });
   root.addEventListener('submit', e => {
