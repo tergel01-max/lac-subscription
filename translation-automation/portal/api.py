@@ -201,21 +201,40 @@ def import_book(title, english_file_url, mongolian_file_url=None, model="gpt-4o"
 
 
 @frappe.whitelist()
-def generate(project, model=None):
+def generate(project, model=None, chapter=None, from_seq=None, to_seq=None, limit=None):
+    """Queue the AI pass over a chosen SCOPE of Pending segments:
+    whole book (default), one chapter, a seq range, or the first N."""
     frappe.only_for("System Manager")
+    filters = {"project": project, "status": "Pending"}
+    if chapter:
+        filters["chapter"] = chapter
+    if from_seq and to_seq:
+        filters["seq"] = ["between", [int(from_seq), int(to_seq)]]
+    elif from_seq:
+        filters["seq"] = [">=", int(from_seq)]
+    elif to_seq:
+        filters["seq"] = ["<=", int(to_seq)]
+    names = frappe.get_all("Translation Segment", pluck="name", filters=filters,
+                           order_by="seq asc", limit_page_length=int(limit) if limit else 0)
+    if not names:
+        return {"queued": 0}
     frappe.enqueue("lac_translation.api._generate_job", queue="long", timeout=6000,
-                   project=project, model=model)
-    return {"queued": True}
+                   project=project, names=names, model=model)
+    return {"queued": len(names)}
 
 
-def _generate_job(project, model=None):
+def _generate_job(project, model=None, names=None):
     proj = frappe.get_doc("Translation Project", project)
     model = model or proj.model or "gpt-4o-mini"
     glossary = _eff_glossary(proj)
     price = PRICES.get(model, {"in": 0.15, "out": 0.60})
     headers = _headers()
-    segs = frappe.get_all("Translation Segment", filters={"project": project, "status": "Pending"},
-                          fields=["name", "seq", "source_text", "draft_text"], order_by="seq asc")
+    if names:
+        segs = frappe.get_all("Translation Segment", filters={"name": ["in", names]},
+                              fields=["name", "seq", "source_text", "draft_text"], order_by="seq asc")
+    else:
+        segs = frappe.get_all("Translation Segment", filters={"project": project, "status": "Pending"},
+                              fields=["name", "seq", "source_text", "draft_text"], order_by="seq asc")
     tp = tc = 0
     for start in range(0, len(segs), BATCH):
         chunk = segs[start:start + BATCH]

@@ -339,7 +339,32 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpGloss').onclick = () => overlay('Glossary / style guide', '<pre>' + esc(S.glossary || 'No glossary set for this project.') + '</pre>');
   $id('tpTxt').onclick = () => { const txt = S.segs.map(s => s.final_text || s.ai_suggestion || s.draft_text || '').join('\n'); const b = new Blob([txt], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (S.projects.find(p => p.name === S.project)?.title || 'book') + '_MN.txt'; a.click(); };
   $id('tpDocx').onclick = () => { if (!S.project) return; frappe.show_alert({ message: 'Building .docx…', indicator: 'blue' }); frappe.call({ method: 'lac_translation.api.export_docx', args: { project: S.project } }).then(r => { if (r.message && r.message.file_url) window.open(r.message.file_url, '_blank'); }); };
-  $id('tpGen').onclick = () => { if (!S.project) return; frappe.confirm('Generate AI suggestions for all Pending segments in this book? (runs in the background)', () => { frappe.call({ method: 'lac_translation.api.generate', args: { project: S.project } }).then(() => frappe.show_alert({ message: 'Queued — suggestions will appear as it runs.', indicator: 'blue' })); }); };
+  $id('tpGen').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    const chapters = [...new Set(S.segs.map(s => s.chapter || 'Book'))];
+    const pend = S.segs.filter(s => s.status === 'Pending').length;
+    const d = new frappe.ui.Dialog({
+      title: 'Generate AI suggestions',
+      fields: [
+        { fieldname: 'mode', fieldtype: 'Select', label: 'Scope', reqd: 1, default: 'Whole book (all pending)', options: ['Whole book (all pending)', 'This chapter', 'Sentence range', 'First N pending'].join('\n') },
+        { fieldname: 'chapter', fieldtype: 'Select', label: 'Chapter', options: chapters.join('\n'), depends_on: 'eval:doc.mode=="This chapter"' },
+        { fieldname: 'from_seq', fieldtype: 'Int', label: 'From § (seq)', depends_on: 'eval:doc.mode=="Sentence range"' },
+        { fieldname: 'to_seq', fieldtype: 'Int', label: 'To § (seq)', depends_on: 'eval:doc.mode=="Sentence range"' },
+        { fieldname: 'count', fieldtype: 'Int', label: 'How many', default: 20, depends_on: 'eval:doc.mode=="First N pending"' },
+        { fieldname: 'info', fieldtype: 'HTML', options: `<div style="font-size:12px;color:#888">${pend} pending segment(s). Runs in the background; suggestions appear as it completes. Tip: start with a small range to check quality/cost.</div>` },
+      ],
+      primary_action_label: 'Generate',
+      primary_action(v) {
+        const args = { project: S.project };
+        if (v.mode === 'This chapter') args.chapter = v.chapter;
+        else if (v.mode === 'Sentence range') { args.from_seq = v.from_seq; args.to_seq = v.to_seq; }
+        else if (v.mode === 'First N pending') args.limit = v.count;
+        d.hide();
+        frappe.call({ method: 'lac_translation.api.generate', args }).then(r => frappe.show_alert({ message: 'Queued ' + ((r.message || {}).queued || 0) + ' segment(s)…', indicator: 'blue' }));
+      },
+    });
+    d.show();
+  };
   $id('tpMore').onclick = (e) => { e.stopPropagation(); $id('tpMenu').classList.toggle('open'); };
   $id('tpMenu').addEventListener('click', () => $id('tpMenu').classList.remove('open'));
   document.addEventListener('click', () => { const m = $id('tpMenu'); if (m) m.classList.remove('open'); });
