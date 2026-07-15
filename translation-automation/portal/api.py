@@ -17,6 +17,8 @@ scripts); the server reaches OpenAI directly.
 import io
 import re
 import json
+import zipfile
+import xml.etree.ElementTree as ET
 
 import frappe
 from frappe.integrations.utils import make_post_request
@@ -347,3 +349,105 @@ def _apply_term_job(project, source_term, target_term, names):
                 s.db_set("status", "Suggested")
         frappe.db.commit()
         frappe.publish_realtime("lac_translation_progress", {"project": project, "done": i + 1, "total": total})
+
+
+# --------------------------------------------------------------------------- #
+# import a marked-up .docx: tracked changes -> Suggestions, comments -> Comments
+# --------------------------------------------------------------------------- #
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _para_revisions(p):
+    """Return (original_text, suggested_text, authors, comment_ids) for a w:p,
+    where original = reject-all-changes and suggested = accept-all-changes."""
+    orig, sugg, authors, cids = [], [], set(), set()
+
+    def walk(node, in_ins, in_del):
+        for ch in node:
+            tag = ch.tag
+            if tag == _W + "ins":
+                if ch.get(_W + "author"):
+                    authors.add(ch.get(_W + "author"))
+                walk(ch, True, in_del)
+            elif tag == _W + "del":
+                if ch.get(_W + "author"):
+                    authors.add(ch.get(_W + "author"))
+                walk(ch, in_ins, True)
+            elif tag == _W + "commentRangeStart":
+                cids.add(ch.get(_W + "id"))
+                walk(ch, in_ins, in_del)
+            elif tag == _W + "t":
+                t = ch.text or ""
+                if not in_del:
+                    sugg.append(t)
+                if not in_ins:
+                    orig.append(t)
+            elif tag == _W + "delText":
+                orig.append(ch.text or "")
+            else:
+                walk(ch, in_ins, in_del)
+
+    walk(p, False, False)
+    return "".join(orig).strip(), "".join(sugg).strip(), authors, cids
+
+
+@frappe.whitelist()
+def import_revisions(project, file_url):
+    """Read a downloaded Google/Word .docx that has tracked changes + comments,
+    and attach them to an existing project's segments as Translation Suggestions
+    (Accept/Reject) and Comments. Best-effort text matching to segments."""
+    frappe.only_for("System Manager")
+    from frappe.utils.file_manager import get_file
+    _n, content = get_file(file_url)
+    if isinstance(content, str):
+        content = content.encode("utf-8", "ignore")
+    z = zipfile.ZipFile(io.BytesIO(content))
+
+    comments = {}
+    if "word/comments.xml" in z.namelist():
+        ct = ET.fromstring(z.read("word/comments.xml"))
+        for c in ct.iter(_W + "comment"):
+            comments[c.get(_W + "id")] = {
+                "author": c.get(_W + "author") or "Reviewer",
+                "text": "".join(t.text or "" for t in c.iter(_W + "t")).strip(),
+            }
+
+    doc = ET.fromstring(z.read("word/document.xml"))
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "draft_text", "final_text"], order_by="seq asc")
+
+    def norm(t):
+        return re.sub(r"\s+", " ", (t or "")).strip()
+
+    def match_seg(text):
+        text = norm(text)
+        if not text:
+            return None
+        for s in segs:
+            d = norm(s.get("final_text") or s.get("draft_text"))
+            if d and (d in text or text in d):
+                return s["name"]
+        return None
+
+    n_sug = n_cmt = 0
+    for p in doc.iter(_W + "p"):
+        orig, sugg, authors, cids = _para_revisions(p)
+        seg = match_seg(orig) or match_seg(sugg)
+        if seg and sugg and sugg != orig:
+            frappe.get_doc({
+                "doctype": "Translation Suggestion", "project": project, "segment": seg,
+                "origin": "Imported", "author": ", ".join(sorted(authors)) or "Reviewer",
+                "suggested_text": sugg, "status": "Open",
+            }).insert(ignore_permissions=True)
+            n_sug += 1
+        for cid in cids:
+            c = comments.get(cid)
+            if c and seg and c["text"]:
+                frappe.get_doc({
+                    "doctype": "Comment", "comment_type": "Comment",
+                    "reference_doctype": "Translation Segment", "reference_name": seg,
+                    "content": "[%s] %s" % (c["author"], c["text"]),
+                }).insert(ignore_permissions=True)
+                n_cmt += 1
+    frappe.db.commit()
+    return {"suggestions": n_sug, "comments": n_cmt, "segments": len(segs)}

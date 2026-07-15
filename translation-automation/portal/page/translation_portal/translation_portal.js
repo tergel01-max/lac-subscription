@@ -3,7 +3,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
   const STATUS = ['Pending', 'Suggested', 'Accepted', 'Edited', 'Rejected', 'Locked'];
   const DONE = s => s === 'Accepted' || s === 'Edited' || s === 'Locked';
-  const S = { projects: [], project: null, glossary: '', segs: [], terms: [], cur: null, mode: 'segments', filter: 'All', q: '', bilingual: false };
+  const S = { projects: [], project: null, glossary: '', segs: [], terms: [], suggestions: [], cur: null, mode: 'segments', filter: 'All', q: '', bilingual: false };
   const esc = s => (s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const color = st => 'var(--s-' + st + ')';
 
@@ -30,6 +30,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         <button class="tp-btn ghost" id="tpQA">✓ QA</button>
         <button class="tp-btn ghost" id="tpTerms">📕 Terms</button>
         <button class="tp-btn ghost" id="tpImport">＋ Import</button>
+        <button class="tp-btn ghost" id="tpImportRev">⇄ Review</button>
         <button class="tp-btn ghost" id="tpGen">✨ AI</button>
         <button class="tp-btn ghost" id="tpGloss">📑 Gloss</button>
         <button class="tp-btn ghost" id="tpTxt">⬇ txt</button>
@@ -84,8 +85,12 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     return frappe.db.get_list('Translation Term', { filters: { project: S.project }, fields: ['name', 'source_term', 'target_term', 'note'], limit: 0 })
       .then(r => { S.terms = r || []; }).catch(() => { S.terms = []; });
   }
+  function loadSuggestions() {
+    return frappe.db.get_list('Translation Suggestion', { filters: { project: S.project, status: 'Open' }, fields: ['name', 'segment', 'origin', 'author', 'suggested_text', 'note'], limit: 0 })
+      .then(r => { S.suggestions = r || []; }).catch(() => { S.suggestions = []; });
+  }
   function loadSegs() {
-    return loadTerms().then(() => frappe.db.get_list('Translation Segment', {
+    return loadTerms().then(loadSuggestions).then(() => frappe.db.get_list('Translation Segment', {
       filters: { project: S.project },
       fields: ['name', 'seq', 'chapter', 'status', 'source_text', 'draft_text', 'ai_suggestion', 'ai_alternative', 'ai_rationale', 'final_text', 'reviewer_comment'],
       order_by: 'seq asc', limit: 0,
@@ -118,12 +123,15 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
     const draftBtn = locked ? '' : '<button class="tp-btn ghost" data-act="useDraft" style="padding:3px 9px;font-size:12px">Keep draft</button>';
     const saveBtn = locked ? '' : '<button class="tp-btn primary" data-act="saveFinal" style="padding:4px 12px;font-size:12px">Save</button>';
+    const sugs = (S.suggestions || []).filter(x => x.segment === s.name);
+    const sugHtml = sugs.map(su => `<div class="tp-card sug"><div class="lbl"><span class="name">Suggested change · ${esc(su.origin)}${su.author ? ' · ' + esc(su.author) : ''}</span></div><div class="body"><div class="diff">${diff(s.final_text || s.draft_text || '', su.suggested_text)}</div></div>${su.note ? `<div class="notes"><span>${esc(su.note)}</span></div>` : ''}<div class="cta"><button class="tp-btn primary" data-act="acceptsug" data-sug="${su.name}">✔ Accept change</button><button class="tp-btn" data-act="rejectsug" data-sug="${su.name}">Reject</button></div></div>`).join('');
     return `
       ${doneBar}
       <div class="tp-card en"><div class="lbl"><span class="name">Original · English</span></div><div class="body">${esc(s.source_text)}</div></div>
       <div class="tp-card"><div class="lbl"><span class="name">Translator draft</span>${draftBtn}</div><div class="body">${esc(s.draft_text)}</div></div>
       ${ai}
-      <div class="tp-card final"><div class="lbl"><span class="name">Final</span>${saveBtn}</div><div class="body"><textarea id="tpFinal" ${locked ? 'readonly' : ''} placeholder="Accept above or type the final Mongolian…">${esc(s.final_text)}</textarea></div></div>
+      ${sugHtml}
+      <div class="tp-card final"><div class="lbl"><span class="name">Final</span><span style="display:flex;gap:6px">${saveBtn}<button class="tp-btn" data-act="propose" style="padding:4px 10px;font-size:12px">✎ Propose</button></span></div><div class="body"><textarea id="tpFinal" ${locked ? 'readonly' : ''} placeholder="Accept above or type the final Mongolian…">${esc(s.final_text)}</textarea></div></div>
       <div class="tp-card comments"><div class="lbl"><span class="name">Comments</span></div><div class="body" id="tpCmts"><div style="color:var(--faint);font-size:13px">Loading…</div><form class="cmt-form" id="tpCmtForm"><input id="tpCmtInput" placeholder="Add a note for the team…"><button class="tp-btn" type="submit">Post</button></form></div></div>`;
   }
 
@@ -131,14 +139,15 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   function counts() { const c = { All: S.segs.length }; STATUS.forEach(k => c[k] = S.segs.filter(s => s.status === k).length); return c; }
   function renderChips() { const c = counts(); const order = ['All', 'Pending', 'Suggested', 'Accepted', 'Edited', 'Locked']; $id('tpChips').innerHTML = order.map(k => `<button class="tp-chip" data-f="${k}" aria-pressed="${S.filter === k}">${k} <span class="n">${c[k] || 0}</span></button>`).join(''); }
   function visible() { return S.segs.filter(s => { if (S.filter !== 'All' && s.status !== S.filter) return false; if (S.q) { const q = S.q.toLowerCase(); return ((s.source_text || '') + ' ' + (s.draft_text || '') + ' ' + (s.final_text || s.ai_suggestion || '')).toLowerCase().includes(q); } return true; }); }
+  function sugCounts() { const c = {}; (S.suggestions || []).forEach(x => { c[x.segment] = (c[x.segment] || 0) + 1; }); return c; }
   function renderList() {
-    const vis = visible(), groups = {}, order = [];
+    const vis = visible(), groups = {}, order = [], sc = sugCounts();
     vis.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     let html = '';
     order.forEach(ch => {
       const done = groups[ch].filter(s => DONE(s.status)).length;
       html += `<div class="tp-chapter"><span>${esc(ch)}</span><span>${done}/${groups[ch].length}</span></div>`;
-      html += groups[ch].map(s => `<div class="tp-row ${s.name === S.cur ? 'active' : ''}" data-name="${s.name}"><div class="tp-dot" style="background:${color(s.status)}"></div><div><div class="seq">§${s.seq} · ${s.status}</div><div class="src">${esc(s.source_text)}</div><div class="mn">${esc(s.final_text || s.ai_suggestion || s.draft_text)}</div></div></div>`).join('');
+      html += groups[ch].map(s => `<div class="tp-row ${s.name === S.cur ? 'active' : ''}" data-name="${s.name}"><div class="tp-dot" style="background:${color(s.status)}"></div><div><div class="seq">§${s.seq} · ${s.status}${sc[s.name] ? ` · <span class="tp-sugbadge">✎${sc[s.name]}</span>` : ''}</div><div class="src">${esc(s.source_text)}</div><div class="mn">${esc(s.final_text || s.ai_suggestion || s.draft_text)}</div></div></div>`).join('');
     });
     $id('tpList').innerHTML = html || '<div style="padding:20px;color:var(--faint);font-size:13px">No segments match.</div>';
   }
@@ -151,7 +160,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
   // ---- reading render ----
   function renderReader() {
-    const groups = {}, order = [];
+    const groups = {}, order = [], sc = sugCounts();
     S.segs.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     const open = $id('tpDrawer').classList.contains('open');
     $id('tpReaderBody').innerHTML = order.map(ch => {
@@ -160,13 +169,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         block = groups[ch].map(s => {
           const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
           const sel = (open && s.name === S.cur) ? ' sel' : '';
-          return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="rsent st-${s.status}${sel}" data-name="${s.name}">${esc(txt)}</div></div>`;
+          return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}" data-name="${s.name}">${esc(txt)}</div></div>`;
         }).join('');
       } else {
         block = '<p>' + groups[ch].map(s => {
           const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
           const sel = (open && s.name === S.cur) ? ' sel' : '';
-          return `<span class="rsent st-${s.status}${sel}" data-name="${s.name}">${esc(txt)}</span>`;
+          return `<span class="rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}" data-name="${s.name}">${esc(txt)}</span>`;
         }).join(' ') + '</p>';
       }
       return `<div class="chap-title">${esc(ch)}</div>${block}`;
@@ -262,6 +271,28 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             .then(r => { const d = r.message || {}; Object.assign(s, { ai_suggestion: d.mn, ai_alternative: d.alt, ai_rationale: d.notes, status: 'Suggested' }); renderAll(); frappe.show_alert({ message: 'Regenerated §' + s.seq, indicator: 'green' }); });
         }, 'Regenerate suggestion', 'Run');
     }
+    else if (act === 'acceptsug') {
+      const sn = e.target.closest('[data-act]').dataset.sug; const su = S.suggestions.find(x => x.name === sn); if (!su) return;
+      S.suggestions = S.suggestions.filter(x => x.name !== sn);
+      frappe.db.set_value('Translation Suggestion', sn, 'status', 'Accepted');
+      save(s, { final_text: su.suggested_text, status: 'Edited' });
+      frappe.show_alert({ message: 'Change accepted §' + s.seq, indicator: 'green' });
+    }
+    else if (act === 'rejectsug') {
+      const sn = e.target.closest('[data-act]').dataset.sug;
+      S.suggestions = S.suggestions.filter(x => x.name !== sn);
+      frappe.db.set_value('Translation Suggestion', sn, 'status', 'Rejected');
+      renderAll(); frappe.show_alert({ message: 'Change rejected', indicator: 'orange' });
+    }
+    else if (act === 'propose') {
+      frappe.prompt([
+        { fieldname: 'text', fieldtype: 'Small Text', label: 'Proposed Mongolian', reqd: 1, default: (s.final_text || s.ai_suggestion || s.draft_text || '') },
+        { fieldname: 'note', fieldtype: 'Data', label: 'Note (optional)' },
+      ], v => {
+        frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: s.name, origin: 'Reviewer', author: frappe.session.user, suggested_text: v.text, note: v.note || '', status: 'Open' } } })
+          .then(() => { loadSuggestions().then(renderAll); frappe.show_alert({ message: 'Proposed a change to §' + s.seq, indicator: 'blue' }); });
+      }, 'Propose a change', 'Submit');
+    }
     else if (act === 'saveFinal') { const v = $id('tpFinal').value; const st = (v.trim() === (s.ai_suggestion || '').trim() || v.trim() === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited'; save(s, { final_text: v, status: st }); frappe.show_alert({ message: 'Saved §' + s.seq, indicator: 'green' }); }
   });
   root.addEventListener('submit', e => {
@@ -303,6 +334,21 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpGen').onclick = () => { if (!S.project) return; frappe.confirm('Generate AI suggestions for all Pending segments in this book? (runs in the background)', () => { frappe.call({ method: 'lac_translation.api.generate', args: { project: S.project } }).then(() => frappe.show_alert({ message: 'Queued — suggestions will appear as it runs.', indicator: 'blue' })); }); };
   $id('tpImport').onclick = openImport;
   $id('tpTerms').onclick = openTerms;
+  $id('tpImportRev').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    const d = new frappe.ui.Dialog({
+      title: 'Import a reviewed .docx (comments + tracked changes)',
+      fields: [{ fieldname: 'file', fieldtype: 'Attach', label: 'Reviewed .docx', reqd: 1 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Download from Google Docs as <b>Word (.docx)</b> with suggestions & comments intact, then upload here. Changes attach to matching segments as Accept/Reject cards; comments attach to the timeline.</div>' }],
+      primary_action_label: 'Import',
+      primary_action(v) {
+        d.hide(); frappe.show_alert({ message: 'Reading revisions…', indicator: 'blue' });
+        frappe.call({ method: 'lac_translation.api.import_revisions', args: { project: S.project, file_url: v.file } })
+          .then(r => { const m = r.message || {}; frappe.show_alert({ message: 'Imported ' + (m.suggestions || 0) + ' change(s), ' + (m.comments || 0) + ' comment(s)', indicator: 'green' }); loadSegs(); });
+      },
+    });
+    d.show();
+  };
 
   function openTerms() {
     const rows = (S.terms || []).map(t => {

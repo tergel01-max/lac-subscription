@@ -122,6 +122,11 @@
 .tp .tp-card.ai{border-color:color-mix(in srgb,var(--s-Suggested) 45%,var(--border))}
 .tp .tp-card.ai>.lbl{background:color-mix(in srgb,var(--s-Suggested) 12%,var(--surface))}
 .tp .tp-card.ai .lbl .name{color:color-mix(in srgb,var(--s-Suggested) 78%,var(--ink))}
+.tp .tp-card.sug{border-color:color-mix(in srgb,var(--s-Edited) 50%,var(--border))}
+.tp .tp-card.sug>.lbl{background:color-mix(in srgb,var(--s-Edited) 12%,var(--surface))}
+.tp .tp-card.sug .lbl .name{color:color-mix(in srgb,var(--s-Edited) 82%,var(--ink))}
+.tp .tp-sugbadge{color:var(--s-Edited);font-weight:700}
+.tp .rsent.has-sug{background:color-mix(in srgb,var(--s-Edited) 12%,transparent);border-radius:4px}
 .tp .diff ins{background:var(--add-bg);color:var(--add-ink);text-decoration:none;border-radius:3px;padding:0 1px}
 .tp .diff del{background:var(--del-bg);color:var(--del-ink);border-radius:3px;padding:0 1px}
 .tp .nochange{color:var(--faint);font-family:var(--sans);font-size:13px;font-style:italic}
