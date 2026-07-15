@@ -451,3 +451,89 @@ def import_revisions(project, file_url):
                 n_cmt += 1
     frappe.db.commit()
     return {"suggestions": n_sug, "comments": n_cmt, "segments": len(segs)}
+
+
+# --------------------------------------------------------------------------- #
+# unified: import a whole reviewed translation (marked-up MN [+ optional EN])
+# --------------------------------------------------------------------------- #
+def _docx_zip(file_url):
+    from frappe.utils.file_manager import get_file
+    _n, content = get_file(file_url)
+    if isinstance(content, str):
+        content = content.encode("utf-8", "ignore")
+    return zipfile.ZipFile(io.BytesIO(content))
+
+
+def _docx_comment_map(z):
+    out = {}
+    if "word/comments.xml" in z.namelist():
+        ct = ET.fromstring(z.read("word/comments.xml"))
+        for c in ct.iter(_W + "comment"):
+            out[c.get(_W + "id")] = {
+                "author": c.get(_W + "author") or "Reviewer",
+                "text": "".join(t.text or "" for t in c.iter(_W + "t")).strip(),
+            }
+    return out
+
+
+def _docx_rev_paragraphs(z):
+    doc = ET.fromstring(z.read("word/document.xml"))
+    return [_para_revisions(p) for p in doc.iter(_W + "p")]
+
+
+@frappe.whitelist()
+def import_reviewed(title, mongolian_file_url, english_file_url=None, model="gpt-4o", glossary=""):
+    """Create a project from a marked-up Mongolian .docx: draft = the 'before'
+    (reject-changes) text; each tracked change becomes an Open Suggestion; each
+    comment becomes a segment Comment. English (optional) is position-aligned as
+    the source reference (approximate)."""
+    frappe.only_for("System Manager")
+    zmn = _docx_zip(mongolian_file_url)
+    mn = _docx_rev_paragraphs(zmn)
+    comments = _docx_comment_map(zmn)
+    en = _docx_paragraphs(english_file_url) if english_file_url else []
+
+    proj = frappe.get_doc({
+        "doctype": "Translation Project", "title": title, "status": "Review",
+        "source_language": "English", "target_language": "Mongolian",
+        "model": model, "glossary": glossary,
+    }).insert()
+
+    seq = 0
+    chapter = "Book"
+    n_sug = n_cmt = 0
+    for idx, (orig, sugg, authors, cids) in enumerate(mn):
+        if not orig and not sugg:
+            continue
+        en_text = ""
+        if idx < len(en):
+            style, en_text = en[idx]
+            if _is_heading(style, en_text):
+                chapter = en_text[:130]
+        seq += 1
+        seg = frappe.get_doc({
+            "doctype": "Translation Segment", "project": proj.name, "seq": seq,
+            "chapter": chapter, "status": "Pending",
+            "source_text": en_text, "draft_text": orig or sugg,
+        }).insert(ignore_permissions=True)
+        if sugg and sugg != orig:
+            frappe.get_doc({
+                "doctype": "Translation Suggestion", "project": proj.name, "segment": seg.name,
+                "origin": "Imported", "author": ", ".join(sorted(authors)) or "Reviewer",
+                "suggested_text": sugg, "status": "Open",
+            }).insert(ignore_permissions=True)
+            n_sug += 1
+        for cid in cids:
+            c = comments.get(cid)
+            if c and c["text"]:
+                frappe.get_doc({
+                    "doctype": "Comment", "comment_type": "Comment",
+                    "reference_doctype": "Translation Segment", "reference_name": seg.name,
+                    "content": "[%s] %s" % (c["author"], c["text"]),
+                }).insert(ignore_permissions=True)
+                n_cmt += 1
+        if seq % 200 == 0:
+            frappe.db.commit()
+    proj.db_set("total_segments", seq)
+    frappe.db.commit()
+    return {"project": proj.name, "segments": seq, "suggestions": n_sug, "comments": n_cmt}

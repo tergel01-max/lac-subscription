@@ -35,8 +35,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             <button class="tp-mi" id="tpTerms">📕 Terms</button>
             <button class="tp-mi" id="tpGloss">📑 Glossary</button>
             <div class="tp-mi-sep"></div>
-            <button class="tp-mi" id="tpImport">＋ Import book</button>
-            <button class="tp-mi" id="tpImportRev">⇄ Import review</button>
+            <button class="tp-mi" id="tpImport">＋ Import book (EN + MN)</button>
+            <button class="tp-mi" id="tpImportReviewed">⇄ Import reviewed translation</button>
+            <button class="tp-mi" id="tpImportRev">⇄ Attach review to current book</button>
             <div class="tp-mi-sep"></div>
             <button class="tp-mi" id="tpTxt">⬇ Export .txt</button>
             <button class="tp-mi" id="tpDocx">📄 Export .docx</button>
@@ -344,6 +345,26 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   document.addEventListener('click', () => { const m = $id('tpMenu'); if (m) m.classList.remove('open'); });
   $id('tpImport').onclick = openImport;
   $id('tpTerms').onclick = openTerms;
+  $id('tpImportReviewed').onclick = () => {
+    const d = new frappe.ui.Dialog({
+      title: 'Import reviewed translation', size: 'large',
+      fields: [
+        { fieldname: 'title', fieldtype: 'Data', label: 'Book title', reqd: 1 },
+        { fieldname: 'model', fieldtype: 'Data', label: 'OpenAI model', default: 'gpt-4o' },
+        { fieldname: 'mongolian', fieldtype: 'Attach', label: 'Reviewed Mongolian (.docx with tracked changes/comments)', reqd: 1 },
+        { fieldname: 'english', fieldtype: 'Attach', label: 'English source (.docx, optional reference)' },
+        { fieldname: 'glossary', fieldtype: 'Small Text', label: 'Glossary / style (optional)' },
+        { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Creates a book where the draft is the “before” text, each tracked change is an Accept/Reject suggestion, and comments attach to the timeline.</div>' },
+      ],
+      primary_action_label: 'Import',
+      primary_action(v) {
+        d.hide(); frappe.show_alert({ message: 'Importing reviewed translation…', indicator: 'blue' });
+        frappe.call({ method: 'lac_translation.api.import_reviewed', args: { title: v.title, mongolian_file_url: v.mongolian, english_file_url: v.english || '', model: v.model || 'gpt-4o', glossary: v.glossary || '' } })
+          .then(r => { const m = r.message || {}; frappe.show_alert({ message: 'Imported ' + (m.segments || 0) + ' segments, ' + (m.suggestions || 0) + ' change(s), ' + (m.comments || 0) + ' comment(s)', indicator: 'green' }); loadProjects().then(() => { S.project = m.project; const sel = $id('tpBook'); if (sel) sel.value = m.project; S.cur = null; loadSegs(); }); });
+      },
+    });
+    d.show();
+  };
   $id('tpImportRev').onclick = () => {
     if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
     const d = new frappe.ui.Dialog({
