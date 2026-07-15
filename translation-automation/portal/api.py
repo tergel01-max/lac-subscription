@@ -149,6 +149,9 @@ def _pdf_paragraphs(file_url):
         for t, sz in lines:
             if t.lower()[:40] in rep:
                 continue
+            low = t.lower()
+            if "binnenwerk" in low or ".indd" in low:   # per-page print footer
+                continue
             if re.match(r"^\s*\d{1,3}\s*$", t) or _EN_NUM_ROW.match(t):
                 continue
             letters = [c for c in t if c.isalpha()]
