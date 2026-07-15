@@ -126,6 +126,18 @@ def test_segmentation():
     abbr = w.split_sentences("Based on Dr. Masquelier's work. It was groundbreaking.")
     check("does not split on 'Dr.'", len(abbr) == 2 and abbr[0].startswith("Based on Dr. Masquelier"))
 
+    # initials must not split (W.G.C. Forsyth)
+    ini = w.split_sentences("In 1951, Australian scientist W.G.C. Forsyth first isolated flavanols.")
+    check("does not split on initials 'W.G.C.'", len(ini) == 1)
+
+    # missing space after a sentence period glued to a number must split
+    merged = w.split_sentences("Эдгээр эм худалдаалагдсаар байгаа юм.1980 онд зах зээлд нэвтэрсэн.")
+    check("repairs 'юм.1980' into two sentences", len(merged) == 2 and merged[1].startswith("1980"))
+
+    # decimals must NOT be split
+    dec = w.split_sentences("The dose was 3.14 grams per day.")
+    check("does not split decimals like 3.14", len(dec) == 1)
+
 
 def test_run_no_dropped_sentences():
     # 10 pending segments -> batches of 8 + 2; model drops one in batch 1

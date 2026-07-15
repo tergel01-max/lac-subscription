@@ -48,17 +48,30 @@ BATCH_SIZE = 8  # sentences per OpenAI request (context vs. cost trade-off)
 
 SYSTEM_PROMPT = (
     "You are an expert literary translator and editor specializing in "
-    "English-to-Mongolian. You are given an English SOURCE and an existing "
-    "Mongolian DRAFT. Improve the draft ONLY where it increases accuracy to the "
-    "source or naturalness/fluency in Mongolian. Rules: "
-    "(1) If the draft is already accurate and natural, output the draft text "
-    "itself verbatim — NEVER output a placeholder such as 'UNCHANGED'; always "
-    "return the actual Mongolian sentence. "
-    "(2) Preserve the draft's punctuation and quotation-mark style (e.g. « » "
-    "or “ ”) — do not convert quotes. "
-    "(3) Never merge, split, drop, summarize, add, or reorder sentences. "
-    "(4) Preserve names, numbers, dates, and terminology. "
-    "(5) For headings, use natural Mongolian conventions (e.g. 'Introduction' → 'Оршил'). "
+    "English-to-Mongolian, with domain expertise in medicine, nutrition and "
+    "chemistry. You are given an English SOURCE and an existing Mongolian DRAFT. "
+    "Produce the best Mongolian rendering.\n\n"
+    "MONGOLIAN LANGUAGE QUALITY:\n"
+    "- Write natural, idiomatic literary Mongolian that obeys standard grammar, "
+    "orthography, vowel harmony, case/suffix agreement, postpositions and word "
+    "order (SOV).\n"
+    "- It must read as if written by an educated native Mongolian author, NOT a "
+    "word-for-word ('wooden'/calque) rendering. Recast the sentence the way "
+    "Mongolian requires; do not mirror English syntax, articles or punctuation.\n"
+    "- Fix any grammatical or spelling errors in the draft.\n\n"
+    "TERMINOLOGY (STRICT):\n"
+    "- Render medical, scientific and chemical terms precisely and CONSISTENTLY. "
+    "Use the established Mongolian term when one exists; otherwise use the "
+    "internationally accepted term (Latin/chemical name) in its standard Mongolian "
+    "transliteration, and keep it identical everywhere.\n"
+    "- Never loosely paraphrase a technical term. Preserve proper names, numbers, "
+    "dosages, units, dates and abbreviations (e.g. OPC) exactly.\n"
+    "- The project glossary below is authoritative and overrides your defaults.\n\n"
+    "RULES:\n"
+    "- If the draft is already accurate and natural, output it VERBATIM (never a "
+    "placeholder like 'UNCHANGED').\n"
+    "- Never merge, split, drop, summarize, add or reorder sentences.\n"
+    "- Preserve the draft's quotation-mark style.\n"
     "Output only the improved Mongolian."
 )
 
@@ -157,16 +170,23 @@ _ABBR = {"dr", "mr", "mrs", "ms", "prof", "st", "vs", "etc", "inc",
 def split_sentences(text: str):
     """Lightweight sentence splitter that keeps terminal punctuation.
     Works for Latin and Cyrillic; splits on . ! ? … followed by whitespace.
-    Protects common abbreviations (e.g. 'Dr.') so they don't split."""
+    Handles real-world noise: protects abbreviations ('Dr.') and initials
+    ('W.G.C.', 'Э.С.'), and repairs a missing space after a period glued to a
+    number (e.g. 'юм.1980' -> 'юм. 1980')."""
     text = text.replace("\r\n", "\n").strip()
     if not text:
         return []
-    protected = re.sub(
+    # repair 'letter.<digit>' (missing space after sentence end); leaves 3.14 alone
+    text = re.sub(r"([^\W\d_])([.!?…])(\d)", r"\1\2 \3", text)
+    # protect known abbreviations
+    text = re.sub(
         r"\b([A-Za-z]{1,4})\.",
         lambda m: m.group(1) + "<DOT>" if m.group(1).lower() in _ABBR else m.group(0),
         text,
     )
-    parts = re.split(r"(?<=[.!?…])\s+", protected)
+    # protect single-letter initials in sequences like W.G.C. / Э.С.
+    text = re.sub(r"\b([A-ZА-ЯӨҮ])\.(?=[\sA-ZА-ЯӨҮ])", r"\1<DOT>", text)
+    parts = re.split(r"(?<=[.!?…])\s+", text)
     return [p.strip().replace("<DOT>", ".") for p in parts if p.strip()]
 
 
