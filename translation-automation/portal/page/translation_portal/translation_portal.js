@@ -28,13 +28,20 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       <div class="tp-acts">
         <button class="tp-btn ghost" id="tpNext">⇥ Next</button>
         <button class="tp-btn ghost" id="tpQA">✓ QA</button>
-        <button class="tp-btn ghost" id="tpTerms">📕 Terms</button>
-        <button class="tp-btn ghost" id="tpImport">＋ Import</button>
-        <button class="tp-btn ghost" id="tpImportRev">⇄ Review</button>
         <button class="tp-btn ghost" id="tpGen">✨ AI</button>
-        <button class="tp-btn ghost" id="tpGloss">📑 Gloss</button>
-        <button class="tp-btn ghost" id="tpTxt">⬇ txt</button>
-        <button class="tp-btn ghost" id="tpDocx">📄 docx</button>
+        <div class="tp-menuwrap">
+          <button class="tp-btn ghost" id="tpMore">⋯ More</button>
+          <div class="tp-menu" id="tpMenu">
+            <button class="tp-mi" id="tpTerms">📕 Terms</button>
+            <button class="tp-mi" id="tpGloss">📑 Glossary</button>
+            <div class="tp-mi-sep"></div>
+            <button class="tp-mi" id="tpImport">＋ Import book</button>
+            <button class="tp-mi" id="tpImportRev">⇄ Import review</button>
+            <div class="tp-mi-sep"></div>
+            <button class="tp-mi" id="tpTxt">⬇ Export .txt</button>
+            <button class="tp-mi" id="tpDocx">📄 Export .docx</button>
+          </div>
+        </div>
         <button class="tp-btn ghost tp-icon" id="tpTheme" title="Toggle theme">◐</button>
       </div>
     </div>
@@ -332,6 +339,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpTxt').onclick = () => { const txt = S.segs.map(s => s.final_text || s.ai_suggestion || s.draft_text || '').join('\n'); const b = new Blob([txt], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (S.projects.find(p => p.name === S.project)?.title || 'book') + '_MN.txt'; a.click(); };
   $id('tpDocx').onclick = () => { if (!S.project) return; frappe.show_alert({ message: 'Building .docx…', indicator: 'blue' }); frappe.call({ method: 'lac_translation.api.export_docx', args: { project: S.project } }).then(r => { if (r.message && r.message.file_url) window.open(r.message.file_url, '_blank'); }); };
   $id('tpGen').onclick = () => { if (!S.project) return; frappe.confirm('Generate AI suggestions for all Pending segments in this book? (runs in the background)', () => { frappe.call({ method: 'lac_translation.api.generate', args: { project: S.project } }).then(() => frappe.show_alert({ message: 'Queued — suggestions will appear as it runs.', indicator: 'blue' })); }); };
+  $id('tpMore').onclick = (e) => { e.stopPropagation(); $id('tpMenu').classList.toggle('open'); };
+  $id('tpMenu').addEventListener('click', () => $id('tpMenu').classList.remove('open'));
+  document.addEventListener('click', () => { const m = $id('tpMenu'); if (m) m.classList.remove('open'); });
   $id('tpImport').onclick = openImport;
   $id('tpTerms').onclick = openTerms;
   $id('tpImportRev').onclick = () => {

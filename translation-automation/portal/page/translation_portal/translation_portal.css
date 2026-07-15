@@ -34,7 +34,13 @@
 .tp .tp-prog b{color:var(--ink);font-variant-numeric:tabular-nums}
 .tp .tp-track{height:7px;background:var(--surface-2);border:1px solid var(--border);border-radius:99px;overflow:hidden}
 .tp .tp-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--s-Accepted));transition:width .35s}
-.tp .tp-acts{display:flex;gap:8px}
+.tp .tp-acts{display:flex;gap:8px;align-items:center}
+.tp .tp-menuwrap{position:relative}
+.tp .tp-menu{position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);padding:6px;display:none;flex-direction:column;min-width:190px;z-index:30}
+.tp .tp-menu.open{display:flex}
+.tp .tp-mi{border:0;background:transparent;color:var(--ink);text-align:left;padding:8px 11px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+.tp .tp-mi:hover{background:var(--surface-2)}
+.tp .tp-mi-sep{height:1px;background:var(--border);margin:5px 4px}
 .tp .tp-btn{border:1px solid var(--border);background:var(--surface-2);color:var(--ink);border-radius:9px;padding:7px 13px;font-size:13px;font-weight:600;display:inline-flex;gap:7px;align-items:center;transition:background .12s,border-color .12s,transform .04s}
 .tp .tp-btn:hover{background:var(--raise);border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
 .tp .tp-btn:active{transform:translateY(1px)}
