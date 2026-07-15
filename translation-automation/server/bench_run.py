@@ -12,8 +12,8 @@ has both (Raven already uses OpenAI). This script runs inside Frappe, so it:
 HOW TO RUN (on the server):
     cd ~/frappe-bench
     bench --site site1.local console
-    # then paste the ENTIRE contents of this file, or:
-    #   exec(open('/path/to/bench_run.py').read())
+    # then run (the {} gives exec one namespace so functions see module vars):
+    #   exec(open('/path/to/bench_run.py').read(), {})
 
 Change PROJECT below to target a different Translation Project.
 """
