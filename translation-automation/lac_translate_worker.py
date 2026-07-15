@@ -105,6 +105,38 @@ class ERP:
         r.raise_for_status()
         return r.json()["data"]
 
+    def get_password(self, doctype, name, fieldname):
+        """Read a Password field (e.g. the stored OpenAI key) via the
+        whitelisted frappe.client.get_password method."""
+        r = self.s.get(
+            f"{self.base}/api/method/frappe.client.get_password",
+            params={"doctype": doctype, "name": name, "fieldname": fieldname},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json().get("message")
+
+
+def build_openai_client(erp):
+    """Use OPENAI_API_KEY if set; otherwise reuse the OpenAI key already
+    configured in ERPNext (Raven Settings), so there's no second key to manage.
+    Returns (client, source)."""
+    if os.getenv("OPENAI_API_KEY"):
+        return OpenAI(), "env:OPENAI_API_KEY"
+    key = erp.get_password("Raven Settings", "Raven Settings", "openai_api_key")
+    if not key:
+        sys.exit(
+            "No OpenAI key found. Set OPENAI_API_KEY, or configure "
+            "Raven Settings > OpenAI API Key in ERPNext."
+        )
+    settings = erp.get("Raven Settings", "Raven Settings")
+    kwargs = {"api_key": key}
+    if settings.get("openai_organisation_id"):
+        kwargs["organization"] = settings["openai_organisation_id"]
+    if settings.get("openai_project_id"):
+        kwargs["project"] = settings["openai_project_id"]
+    return OpenAI(**kwargs), "ERPNext:Raven Settings"
+
 
 # --------------------------------------------------------------------------- #
 # Sentence segmentation
@@ -197,9 +229,8 @@ def _improve_batch(client, model, glossary, batch):
 
 
 def cmd_run(erp, args):
-    if not os.getenv("OPENAI_API_KEY"):
-        sys.exit("Set OPENAI_API_KEY.")
-    client = OpenAI()
+    client, key_source = build_openai_client(erp)
+    print(f"OpenAI key source: {key_source}")
     project = erp.get("Translation Project", args.project)
     model = args.model or project.get("model") or "gpt-4o-mini"
     glossary = project.get("glossary") or ""

@@ -36,7 +36,18 @@ one sentence per request is expensive and loses context. So the worker:
 1. `pip install -r requirements.txt`
 2. In ERPNext: your user → **API Access → Generate Keys** (API key + secret).
 3. Fill in `.env` from `.env.example` (`ERPNEXT_URL`, `ERPNEXT_API_KEY`,
-   `ERPNEXT_API_SECRET`, `OPENAI_API_KEY`) and export them.
+   `ERPNEXT_API_SECRET`) and export them.
+
+**OpenAI key:** you do **not** need to set one separately. If `OPENAI_API_KEY`
+is unset, the worker reuses the key already configured in ERPNext
+(*Raven Settings → OpenAI API Key*, incl. org/project IDs). Set
+`OPENAI_API_KEY` only to override.
+
+## Testing
+
+`python test_worker.py` runs an offline test (no network/key/ERPNext needed)
+that stubs OpenAI + the ERP client and verifies the pipeline — including the
+guarantee that a dropped sentence is detected and retried, never lost.
 
 ## Use it
 
