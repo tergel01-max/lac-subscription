@@ -1,0 +1,6 @@
+credentials.json
+token.json
+.env
+improved_mn.txt
+__pycache__/
+*.pyc
