@@ -20,7 +20,9 @@ Change PROJECT below to target a different Translation Project.
 
 import json
 import frappe
+import frappe.utils.password  # ensure submodule is loaded in a fresh console
 from frappe.integrations.utils import make_post_request
+from frappe.utils.password import get_decrypted_password
 
 # ---- config ---------------------------------------------------------------
 PROJECT = "TRP-00002"
@@ -42,7 +44,7 @@ model = proj.model or "gpt-4o-mini"
 glossary = proj.glossary or ""
 price = PRICES.get(model, {"in": 0.15, "out": 0.60})
 
-key = frappe.utils.password.get_decrypted_password("Raven Settings", "Raven Settings", "openai_api_key")
+key = get_decrypted_password("Raven Settings", "Raven Settings", "openai_api_key")
 rs = frappe.get_doc("Raven Settings")
 HEADERS = {"Authorization": "Bearer " + key, "Content-Type": "application/json"}
 if rs.openai_organisation_id:
