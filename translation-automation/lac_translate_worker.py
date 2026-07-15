@@ -47,32 +47,39 @@ DEFAULT_PRICE = {"in": 0.15, "out": 0.60}
 BATCH_SIZE = 8  # sentences per OpenAI request (context vs. cost trade-off)
 
 SYSTEM_PROMPT = (
-    "You are an expert literary translator and editor specializing in "
-    "English-to-Mongolian, with domain expertise in medicine, nutrition and "
-    "chemistry. You are given an English SOURCE and an existing Mongolian DRAFT. "
-    "Produce the best Mongolian rendering.\n\n"
+    "You are an expert literary translator and editor preparing an OFFICIAL, "
+    "PUBLISHED Mongolian edition of an English medical/nutrition book. You are "
+    "given an English SOURCE and an existing Mongolian DRAFT. Act as a "
+    "professional book editor.\n\n"
     "MONGOLIAN LANGUAGE QUALITY:\n"
-    "- Write natural, idiomatic literary Mongolian that obeys standard grammar, "
-    "orthography, vowel harmony, case/suffix agreement, postpositions and word "
-    "order (SOV).\n"
-    "- It must read as if written by an educated native Mongolian author, NOT a "
-    "word-for-word ('wooden'/calque) rendering. Recast the sentence the way "
-    "Mongolian requires; do not mirror English syntax, articles or punctuation.\n"
-    "- Fix any grammatical or spelling errors in the draft.\n\n"
+    "- Write polished, formal, literary Mongolian in the register of a published "
+    "book. Obey standard grammar, orthography, vowel harmony, case/suffix "
+    "agreement, postpositions and word order (SOV).\n"
+    "- It must read as native professional prose, NOT a word-for-word "
+    "('wooden'/calque) rendering. Recast structure the way Mongolian requires; do "
+    "not mirror English syntax or punctuation.\n"
+    "- Replace colloquial/spoken wording with formal equivalents (e.g. "
+    "'тааралддаг' → 'агуулагддаг'). Avoid over-literal calques (e.g. 'empty "
+    "products' → 'шим тэжээл багатай хүнс', not 'хоосон хүнс').\n"
+    "- Fix typos and wrong word choices in the draft.\n\n"
+    "MEANING, IDIOM & TONE:\n"
+    "- Translate idioms and metaphors by MEANING, not literally (e.g. 'lift "
+    "himself to Nobel Prize heights' = seeking fame/self-promotion, not literally "
+    "reaching Nobel level).\n"
+    "- Preserve the author's tone and intent (humility, or critique of an "
+    "industry); do not overstate ('disturbs' = disrupts/challenges, not "
+    "necessarily 'damages').\n"
+    "- Do not leave foreign/technical jargon a general reader won't understand "
+    "untranslated; use the Mongolian term or briefly gloss it.\n\n"
     "TERMINOLOGY (STRICT):\n"
-    "- Render medical, scientific and chemical terms precisely and CONSISTENTLY. "
-    "Use the established Mongolian term when one exists; otherwise use the "
-    "internationally accepted term (Latin/chemical name) in its standard Mongolian "
-    "transliteration, and keep it identical everywhere.\n"
-    "- Never loosely paraphrase a technical term. Preserve proper names, numbers, "
-    "dosages, units, dates and abbreviations (e.g. OPC) exactly.\n"
-    "- The project glossary below is authoritative and overrides your defaults.\n\n"
+    "- Render medical/scientific/chemical terms precisely and CONSISTENTLY per the "
+    "project glossary (authoritative). Keep proper names, numbers, dates, dosages, "
+    "units and abbreviations (e.g. OPC) exact.\n\n"
     "RULES:\n"
-    "- If the draft is already accurate and natural, output it VERBATIM (never a "
-    "placeholder like 'UNCHANGED').\n"
+    "- If the draft is already accurate and natural, keep it (never a placeholder "
+    "like 'UNCHANGED').\n"
     "- Never merge, split, drop, summarize, add or reorder sentences.\n"
-    "- Preserve the draft's quotation-mark style.\n"
-    "Output only the improved Mongolian."
+    "- Preserve the draft's quotation-mark style."
 )
 
 
@@ -244,8 +251,11 @@ def _improve_batch(client, model, glossary, batch):
         lines.append(f"[{item['id']}] EN: {item['source_text']}")
         lines.append(f"     MN draft: {item['draft_text'] or '(none — translate from English)'}")
     instructions = (
-        "Improve the Mongolian for EACH numbered item below. "
-        'Return a JSON object: {"items":[{"id":<int>,"mn":"<improved Mongolian>"}, ...]}. '
+        "For EACH numbered item, act as the book editor. Return a JSON object: "
+        '{"items":[{"id":<int>,'
+        '"mn":"<recommended polished book-style Mongolian>",'
+        '"alt":"<a more faithful/literal alternative, or empty string>",'
+        '"notes":"<one short line in Mongolian naming the key fixes; empty if unchanged>"}, ...]}. '
         "Return EXACTLY one element per input id, using the same ids. "
         "Do not merge, split, drop, reorder, or add items."
     )
@@ -263,7 +273,8 @@ def _improve_batch(client, model, glossary, batch):
         ],
     )
     data = json.loads(resp.choices[0].message.content)
-    result = {int(it["id"]): it["mn"] for it in data.get("items", [])}
+    result = {int(it["id"]): {"mn": it.get("mn", ""), "alt": it.get("alt", ""),
+                              "notes": it.get("notes", "")} for it in data.get("items", [])}
     return result, resp.usage
 
 
@@ -320,11 +331,14 @@ def cmd_run(erp, args):
                 erp.update("Translation Segment", name, {"status": "Rejected"})
                 continue
             cost = per_p / 1e6 * price["in"] + per_c / 1e6 * price["out"]
+            r = results[i]
             erp.update(
                 "Translation Segment",
                 name,
                 {
-                    "ai_suggestion": results[i],
+                    "ai_suggestion": r["mn"],
+                    "ai_alternative": r["alt"],
+                    "ai_rationale": r["notes"],
                     "status": "Suggested",
                     "model": model,
                     "prompt_tokens": int(per_p),
