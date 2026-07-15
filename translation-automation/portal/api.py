@@ -889,6 +889,81 @@ def _align_llm_pairs(model, headers, win_en, mn_lines_text):
     return out, resp.get("usage", {})
 
 
+def _is_headingish(t):
+    t = (t or "").strip()
+    if not t or len(t) > 95:
+        return False
+    letters = [c for c in t if c.isalpha()]
+    if len(letters) < 3:
+        return False
+    up = sum(1 for c in letters if c.upper() == c and c.lower() != c)
+    return up / len(letters) > 0.7 and not t.endswith((".", "!", "?", ",", ";"))
+
+
+def _en_chapters(en):
+    """[(en_index, title)] at each chapter change in the cleaned English."""
+    out, last = [], None
+    for i, e in enumerate(en):
+        c = e.get("chapter") or ""
+        if c and c != last:
+            out.append((i, c))
+            last = c
+    return out
+
+
+def _mn_chapters(segs):
+    """[(position_in_segs, heading_text)] for heading-like Mongolian segments."""
+    return [(i, s["draft_text"]) for i, s in enumerate(segs)
+            if _is_headingish(s.get("draft_text"))]
+
+
+def _pair_chapters(model, headers, en_ch, mn_ch):
+    """Ask the model to match Mongolian chapter titles to English ones.
+    Returns sorted, strictly-increasing anchors [(mn_pos, en_index)]."""
+    if not en_ch or not mn_ch:
+        return [], {}
+    en_lines = "\n".join("E%d: %s" % (i, t[:80]) for i, (_, t) in enumerate(en_ch))
+    mn_lines = "\n".join("M%d: %s" % (i, t[:80]) for i, (_, t) in enumerate(mn_ch))
+    instr = ("These are chapter/section TITLES from an English book (E#) and its "
+             "Mongolian translation (M#), each list in book order. Match each "
+             "Mongolian title to the English title with the same meaning. Ignore "
+             "titles that clearly have no counterpart. Judge by meaning. Return "
+             'JSON: {"pairs":[{"m":<M number>,"e":<E number>}]}.')
+    payload = {"model": model, "temperature": 0, "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": "You are a bilingual (English/Mongolian) alignment tool. Output only valid JSON."},
+                            {"role": "user", "content": instr + "\n\nENGLISH TITLES:\n" + en_lines + "\n\nMONGOLIAN TITLES:\n" + mn_lines}]}
+    resp = make_post_request("https://api.openai.com/v1/chat/completions",
+                             headers=headers, data=json.dumps(payload))
+    data = json.loads(resp["choices"][0]["message"]["content"])
+    anchors = []
+    for p in data.get("pairs", []):
+        mi, ei = _coerce_idx(p.get("m")), _coerce_idx(p.get("e"))
+        if mi is None or ei is None or mi >= len(mn_ch) or ei >= len(en_ch):
+            continue
+        anchors.append((mn_ch[mi][0], en_ch[ei][0]))
+    anchors.sort()
+    # keep only strictly increasing en_index (drop any out-of-order pair)
+    clean, last_en = [], -1
+    for mp, ei in anchors:
+        if ei > last_en:
+            clean.append((mp, ei))
+            last_en = ei
+    return clean, resp.get("usage", {})
+
+
+def _interp_center(anchors, pos, P, N):
+    """Piecewise-linear English index for Mongolian position `pos`, using the
+    chapter anchors plus (0,0) and (P,N) endpoints. Adapts the rate per chapter."""
+    pts = [(0, 0)] + list(anchors) + [(max(1, P - 1), max(1, N - 1))]
+    for k in range(len(pts) - 1):
+        (m0, e0), (m1, e1) = pts[k], pts[k + 1]
+        if m0 <= pos <= m1:
+            if m1 == m0:
+                return e1
+            return e0 + (e1 - e0) * (pos - m0) / (m1 - m0)
+    return pos * (float(N) / float(P))
+
+
 @frappe.whitelist()
 def align_llm(project, english_file, model="gpt-4o", batch=12, from_seq=None, to_seq=None):
     frappe.only_for("System Manager")
@@ -928,22 +1003,32 @@ def _align_llm_job(project, english_file, model="gpt-4o", batch=12,
     if not segs:
         return {"error": "no segments in range"}
 
-    ratio = float(N) / float(P)
-    half = batch + 25                                  # English window half-width
-    # anchor: last confident (mn_position, en_index). Seed proportionally so a
-    # mid-book slice starts its window in the right place.
-    start_pos = seq_of[segs[0]["name"]]
-    anchor_mn, anchor_en = start_pos, int(round(start_pos * ratio))
+    half = batch + 20                                  # English window half-width
     written = 0
     in_tok = out_tok = 0
+
+    # Chapter anchoring: the MN<->EN rate varies wildly per chapter, so a single
+    # global rate slides off. Pair chapter titles once, then interpolate the
+    # window position between those anchors so the rate adapts per chapter.
+    en_ch = _en_chapters(en)
+    mn_ch = _mn_chapters(allsegs)
+    anchors = []
+    try:
+        anchors, pu = _pair_chapters(model, headers, en_ch, mn_ch)
+        in_tok += pu.get("prompt_tokens", 0)
+        out_tok += pu.get("completion_tokens", 0)
+    except Exception:
+        anchors = []
 
     i = 0
     while i < len(segs):
         chunk = segs[i:i + batch]
-        pos0 = seq_of[chunk[0]["name"]]                # global MN position of batch start
-        center = anchor_en + (pos0 - anchor_mn) * ratio
-        lo = max(0, int(round(center)) - half)
-        hi = min(N, lo + 2 * half)
+        pos0 = seq_of[chunk[0]["name"]]
+        posN = seq_of[chunk[-1]["name"]]
+        c0 = _interp_center(anchors, pos0, P, N)
+        c1 = _interp_center(anchors, posN, P, N)
+        lo = max(0, int(round(min(c0, c1))) - half)
+        hi = min(N, int(round(max(c0, c1))) + half)
         win_en = [(k, en_texts[k]) for k in range(lo, hi)]
         mn_lines = "\n".join("M%d: %s" % (n, (chunk[n]["draft_text"] or "")[:280])
                              for n in range(len(chunk)))
@@ -961,8 +1046,6 @@ def _align_llm_job(project, english_file, model="gpt-4o", batch=12,
                 src = " ".join(en_texts[e] for e in ens)
                 vals = {"source_text": src, "chapter": en[ens[0]]["chapter"]}
                 written += 1
-                anchor_mn = seq_of[chunk[n]["name"]]   # re-anchor to this match
-                anchor_en = ens[-1]
             else:
                 vals = {"source_text": "", "chapter": ""}
             frappe.db.set_value("Translation Segment", chunk[n]["name"], vals,
@@ -976,7 +1059,7 @@ def _align_llm_job(project, english_file, model="gpt-4o", batch=12,
 
     cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)   # gpt-4o pricing
     summary = {"en_sentences": N, "mn_segments_total": P, "processed": len(segs),
-               "range": [fs, ts], "aligned": written,
+               "range": [fs, ts], "chapter_anchors": len(anchors), "aligned": written,
                "blank_polish_mode": len(segs) - written, "model": model,
                "prompt_tokens": in_tok, "completion_tokens": out_tok,
                "est_cost_usd": cost}
