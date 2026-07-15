@@ -79,6 +79,20 @@ Suggestion. Put the text you want into **Final** and set status **Accepted**
 python lac_translate_worker.py export --project TRP-00001 --out final_mn.txt
 ```
 
+## Running the AI step ON the ERP server (no deps, no exported key)
+
+If your ERP server has internet (Raven's OpenAI already does), you can run the
+improvement there instead of the external worker — it reads the key straight
+from Raven Settings and needs no `openai`/`requests` install:
+
+```bash
+cd ~/frappe-bench
+bench --site site1.local console
+# then paste the contents of server/bench_run.py  (edit PROJECT at the top)
+```
+
+Same anti-dropping guarantee and token/cost tracking as the worker.
+
 ## Cost awareness
 
 - Per-segment and per-project token counts + an estimated USD cost are stored
