@@ -1,16 +1,16 @@
 frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   const page = frappe.ui.make_app_page({ parent: wrapper, title: 'Translation Portal', single_column: true });
 
-  const STATUS = ['Pending', 'Suggested', 'Accepted', 'Edited', 'Rejected'];
-  const S = { projects: [], project: null, glossary: '', segs: [], cur: null, mode: 'segments', filter: 'All', q: '' };
+  const STATUS = ['Pending', 'Suggested', 'Accepted', 'Edited', 'Rejected', 'Locked'];
+  const DONE = s => s === 'Accepted' || s === 'Edited' || s === 'Locked';
+  const S = { projects: [], project: null, glossary: '', segs: [], cur: null, mode: 'segments', filter: 'All', q: '', bilingual: false };
   const esc = s => (s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const color = st => 'var(--s-' + st + ')';
 
   function diff(a, b) {
     const ow = (a || '').split(/\s+/).filter(Boolean), nw = (b || '').split(/\s+/).filter(Boolean);
     const m = ow.length, k = nw.length, dp = Array.from({ length: m + 1 }, () => new Array(k + 1).fill(0));
-    for (let i = m - 1; i >= 0; i--) for (let j = k - 1; j >= 0; j--)
-      dp[i][j] = ow[i] === nw[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    for (let i = m - 1; i >= 0; i--) for (let j = k - 1; j >= 0; j--) dp[i][j] = ow[i] === nw[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     let i = 0, j = 0, o = [];
     while (i < m && j < k) { if (ow[i] === nw[j]) { o.push(esc(ow[i])); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) { o.push('<del>' + esc(ow[i]) + '</del>'); i++; } else { o.push('<ins>' + esc(nw[j]) + '</ins>'); j++; } }
     while (i < m) { o.push('<del>' + esc(ow[i]) + '</del>'); i++; }
@@ -26,6 +26,8 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       <div class="tp-spacer"></div>
       <div class="tp-prog"><div class="row"><span>Finalized</span><b id="tpProgLabel">—</b></div><div class="tp-track"><div class="tp-fill" id="tpProgFill" style="width:0"></div></div></div>
       <div class="tp-acts">
+        <button class="tp-btn ghost" id="tpNext">⇥ Next to do</button>
+        <button class="tp-btn ghost" id="tpQA">✓ QA</button>
         <button class="tp-btn ghost" id="tpGloss">📑 Glossary</button>
         <button class="tp-btn ghost" id="tpExport">⬇ Export</button>
         <button class="tp-btn ghost tp-icon" id="tpTheme" title="Toggle theme">◐</button>
@@ -44,17 +46,19 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       </div>
       <div class="read-layout" id="tpReadLayout" style="display:none">
         <div class="tp-readerpane"><div class="tp-readerdoc">
-          <div class="tp-hint"><span>Click any sentence to review &amp; edit.</span>
+          <div class="tp-hint">
+            <span>Click any sentence to review &amp; edit.</span>
             <span style="color:var(--s-Suggested)"><span class="u"></span> AI suggestion waiting</span>
-            <span style="color:var(--s-Pending)"><span class="u"></span> not reviewed</span></div>
+            <span style="color:var(--s-Pending)"><span class="u"></span> not reviewed</span>
+            <button class="tp-btn ghost" id="tpBiToggle" style="margin-left:auto;padding:4px 10px;font-size:12px">Show English</button>
+          </div>
           <div id="tpReaderBody"></div>
         </div></div>
         <aside class="tp-drawer" id="tpDrawer"><div class="tp-drawerinner" id="tpDrawerInner"></div></aside>
       </div>
     </div>
   </div>`;
-  const $body = $(page.body);
-  $body.html(shell);
+  const $body = $(page.body); $body.html(shell);
   const bodyEl = $body[0];
   const root = bodyEl.querySelector('#tpRoot');
   const $id = id => bodyEl.querySelector('#' + id);
@@ -82,40 +86,46 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
   // ---- shared editor ----
   function editorHTML(s) {
+    const locked = s.status === 'Locked', finalized = s.status === 'Accepted' || s.status === 'Edited';
     let ai;
     if (s.ai_suggestion) {
       const changed = (s.ai_suggestion || '').trim() !== (s.draft_text || '').trim();
       let inner = `<div class="body"><div class="diff">${changed ? diff(s.draft_text, s.ai_suggestion) : '<span class="nochange">No change — AI kept the draft.</span>'}</div></div>`;
       if (s.ai_rationale) inner += `<div class="notes"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l2 4 4 .6-3 3 .7 4L8 14.8 4.3 16.7l.7-4-3-3 4-.6z"/></svg><span>${esc(s.ai_rationale)}</span></div>`;
-      inner += `<div class="cta"><button class="tp-btn primary" data-act="acceptAI">✔ Accept</button>`;
-      if (s.ai_alternative) inner += `<button class="alt-toggle" data-act="toggleAlt">▾ Alternative</button>`;
-      inner += `</div>`;
-      if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
+      if (!locked) {
+        inner += `<div class="cta"><button class="tp-btn primary" data-act="acceptAI">✔ Accept</button>`;
+        if (s.ai_alternative) inner += `<button class="alt-toggle" data-act="toggleAlt">▾ Alternative</button>`;
+        inner += `</div>`;
+        if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
+      }
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div>${inner}</div>`;
     } else ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div><div class="body"><span class="nochange">Not generated yet — run the AI pass.</span></div></div>`;
-    const done = (s.status === 'Accepted' || s.status === 'Edited');
-    const doneBar = done
-      ? `<div class="tp-donebar"><span>✓ Finalized · ${s.status}</span><button class="tp-btn ghost" data-act="undo" style="padding:4px 11px;font-size:12px">↺ Undo</button></div>`
-      : '';
+
+    let doneBar = '';
+    if (locked) doneBar = `<div class="tp-donebar locked"><span>🔒 Locked · editor signed off</span><button class="tp-btn ghost" data-act="unlock" style="padding:4px 11px;font-size:12px">Unlock</button></div>`;
+    else if (finalized) doneBar = `<div class="tp-donebar"><span>✓ Finalized · ${s.status}</span><span style="display:flex;gap:6px"><button class="tp-btn ghost" data-act="undo" style="padding:4px 11px;font-size:12px">↺ Undo</button><button class="tp-btn" data-act="lock" style="padding:4px 11px;font-size:12px">🔒 Lock (sign off)</button></span></div>`;
+
+    const draftBtn = locked ? '' : '<button class="tp-btn ghost" data-act="useDraft" style="padding:3px 9px;font-size:12px">Keep draft</button>';
+    const saveBtn = locked ? '' : '<button class="tp-btn primary" data-act="saveFinal" style="padding:4px 12px;font-size:12px">Save</button>';
     return `
       ${doneBar}
       <div class="tp-card en"><div class="lbl"><span class="name">Original · English</span></div><div class="body">${esc(s.source_text)}</div></div>
-      <div class="tp-card"><div class="lbl"><span class="name">Translator draft</span><button class="tp-btn ghost" data-act="useDraft" style="padding:3px 9px;font-size:12px">Keep draft</button></div><div class="body">${esc(s.draft_text)}</div></div>
+      <div class="tp-card"><div class="lbl"><span class="name">Translator draft</span>${draftBtn}</div><div class="body">${esc(s.draft_text)}</div></div>
       ${ai}
-      <div class="tp-card final"><div class="lbl"><span class="name">Final</span><button class="tp-btn primary" data-act="saveFinal" style="padding:4px 12px;font-size:12px">Save</button></div><div class="body"><textarea id="tpFinal" placeholder="Accept above or type the final Mongolian…">${esc(s.final_text)}</textarea></div></div>
+      <div class="tp-card final"><div class="lbl"><span class="name">Final</span>${saveBtn}</div><div class="body"><textarea id="tpFinal" ${locked ? 'readonly' : ''} placeholder="Accept above or type the final Mongolian…">${esc(s.final_text)}</textarea></div></div>
       <div class="tp-card comments"><div class="lbl"><span class="name">Comments</span></div><div class="body" id="tpCmts"><div style="color:var(--faint);font-size:13px">Loading…</div><form class="cmt-form" id="tpCmtForm"><input id="tpCmtInput" placeholder="Add a note for the team…"><button class="tp-btn" type="submit">Post</button></form></div></div>`;
   }
 
   // ---- segments render ----
   function counts() { const c = { All: S.segs.length }; STATUS.forEach(k => c[k] = S.segs.filter(s => s.status === k).length); return c; }
-  function renderChips() { const c = counts(); const order = ['All', 'Pending', 'Suggested', 'Accepted', 'Edited']; $id('tpChips').innerHTML = order.map(k => `<button class="tp-chip" data-f="${k}" aria-pressed="${S.filter === k}">${k} <span class="n">${c[k] || 0}</span></button>`).join(''); }
+  function renderChips() { const c = counts(); const order = ['All', 'Pending', 'Suggested', 'Accepted', 'Edited', 'Locked']; $id('tpChips').innerHTML = order.map(k => `<button class="tp-chip" data-f="${k}" aria-pressed="${S.filter === k}">${k} <span class="n">${c[k] || 0}</span></button>`).join(''); }
   function visible() { return S.segs.filter(s => { if (S.filter !== 'All' && s.status !== S.filter) return false; if (S.q) { const q = S.q.toLowerCase(); return ((s.source_text || '') + ' ' + (s.draft_text || '') + ' ' + (s.final_text || s.ai_suggestion || '')).toLowerCase().includes(q); } return true; }); }
   function renderList() {
     const vis = visible(), groups = {}, order = [];
     vis.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     let html = '';
     order.forEach(ch => {
-      const done = groups[ch].filter(s => s.status === 'Accepted' || s.status === 'Edited').length;
+      const done = groups[ch].filter(s => DONE(s.status)).length;
       html += `<div class="tp-chapter"><span>${esc(ch)}</span><span>${done}/${groups[ch].length}</span></div>`;
       html += groups[ch].map(s => `<div class="tp-row ${s.name === S.cur ? 'active' : ''}" data-name="${s.name}"><div class="tp-dot" style="background:${color(s.status)}"></div><div><div class="seq">§${s.seq} · ${s.status}</div><div class="src">${esc(s.source_text)}</div><div class="mn">${esc(s.final_text || s.ai_suggestion || s.draft_text)}</div></div></div>`).join('');
     });
@@ -134,12 +144,21 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     S.segs.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     const open = $id('tpDrawer').classList.contains('open');
     $id('tpReaderBody').innerHTML = order.map(ch => {
-      const sents = groups[ch].map(s => {
-        const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
-        const sel = (open && s.name === S.cur) ? ' sel' : '';
-        return `<span class="rsent st-${s.status}${sel}" data-name="${s.name}">${esc(txt)}</span>`;
-      }).join(' ');
-      return `<div class="chap-title">${esc(ch)}</div><p>${sents}</p>`;
+      let block;
+      if (S.bilingual) {
+        block = groups[ch].map(s => {
+          const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
+          const sel = (open && s.name === S.cur) ? ' sel' : '';
+          return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="rsent st-${s.status}${sel}" data-name="${s.name}">${esc(txt)}</div></div>`;
+        }).join('');
+      } else {
+        block = '<p>' + groups[ch].map(s => {
+          const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
+          const sel = (open && s.name === S.cur) ? ' sel' : '';
+          return `<span class="rsent st-${s.status}${sel}" data-name="${s.name}">${esc(txt)}</span>`;
+        }).join(' ') + '</p>';
+      }
+      return `<div class="chap-title">${esc(ch)}</div>${block}`;
     }).join('') || '<div style="color:var(--faint)">No segments.</div>';
   }
   function openDrawer(name) {
@@ -149,19 +168,11 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     loadComments(s.name); renderReader();
   }
 
-  function renderProgress() { const done = S.segs.filter(s => s.status === 'Accepted' || s.status === 'Edited').length; const pct = S.segs.length ? Math.round(done * 100 / S.segs.length) : 0; $id('tpProgLabel').textContent = `${done} / ${S.segs.length} · ${pct}%`; $id('tpProgFill').style.width = pct + '%'; }
-  function renderAll() {
-    renderProgress();
-    if (S.mode === 'segments') { renderChips(); renderList(); renderWork(); }
-    else { renderReader(); if ($id('tpDrawer').classList.contains('open')) openDrawer(S.cur); }
-  }
-  function setMode(m) {
-    S.mode = m; $id('tpMSeg').setAttribute('aria-pressed', m === 'segments'); $id('tpMRead').setAttribute('aria-pressed', m === 'reading');
-    $id('tpSegLayout').style.display = m === 'segments' ? 'grid' : 'none';
-    $id('tpReadLayout').style.display = m === 'reading' ? 'flex' : 'none';
-    if (m === 'reading') $id('tpDrawer').classList.remove('open');
-    renderAll();
-  }
+  function renderProgress() { const done = S.segs.filter(s => DONE(s.status)).length; const pct = S.segs.length ? Math.round(done * 100 / S.segs.length) : 0; $id('tpProgLabel').textContent = `${done} / ${S.segs.length} · ${pct}%`; $id('tpProgFill').style.width = pct + '%'; }
+  function renderAll() { renderProgress(); if (S.mode === 'segments') { renderChips(); renderList(); renderWork(); } else { renderReader(); if ($id('tpDrawer').classList.contains('open')) openDrawer(S.cur); } }
+  function setMode(m) { S.mode = m; $id('tpMSeg').setAttribute('aria-pressed', m === 'segments'); $id('tpMRead').setAttribute('aria-pressed', m === 'reading'); $id('tpSegLayout').style.display = m === 'segments' ? 'grid' : 'none'; $id('tpReadLayout').style.display = m === 'reading' ? 'flex' : 'none'; if (m === 'reading') $id('tpDrawer').classList.remove('open'); renderAll(); }
+  function setCur(name) { S.cur = name; if (S.mode === 'reading') openDrawer(name); else { renderList(); renderWork(); root.querySelector('.tp-row.active')?.scrollIntoView({ block: 'nearest' }); } }
+  function jumpNext() { const nx = S.segs.find(s => s.status === 'Pending' || s.status === 'Suggested'); if (!nx) { frappe.show_alert({ message: 'Nothing left to review 🎉', indicator: 'green' }); return; } setCur(nx.name); }
 
   // ---- comments ----
   function loadComments(name) {
@@ -171,6 +182,35 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         box.innerHTML = ((rows || []).map(c => `<div class="cmt"><div class="avatar">${esc((c.comment_by || '?')[0].toUpperCase())}</div><div><div class="who"><b>${esc(c.comment_by || '')}</b> · ${frappe.datetime.comment_when ? frappe.datetime.comment_when(c.creation) : ''}</div><div class="txt">${esc((c.content || '').replace(/<[^>]+>/g, ''))}</div></div></div>`).join('') || '<div style="color:var(--faint);font-size:13px">No comments yet.</div>');
         if (form) box.appendChild(form);
       });
+  }
+
+  // ---- QA ----
+  function parseGlossary(g) {
+    const out = []; (g || '').split('\n').forEach(line => { if (line.indexOf('=') < 0 || line.indexOf(':') > -1) return; const p = line.split('='); let en = p[0].replace(/^[-•\s]+/, '').replace(/\/.*$/, '').trim(); let mn = p.slice(1).join('=').replace(/\(.*?\)/g, '').trim(); if (en.length > 1 && mn.length > 1) out.push({ en, mn }); });
+    return out;
+  }
+  function computeQA() {
+    const out = [], gloss = parseGlossary(S.glossary);
+    S.segs.forEach(s => {
+      const eff = s.final_text || s.ai_suggestion || s.draft_text || '';
+      if (DONE(s.status) && !(s.final_text || '').trim()) out.push({ name: s.name, seq: s.seq, sev: 'hi', type: 'Empty final', detail: 'Marked ' + s.status + ' but Final is empty.' });
+      if (eff && !/[Ѐ-ӿ]/.test(eff)) out.push({ name: s.name, seq: s.seq, sev: 'hi', type: 'No Mongolian', detail: 'No Cyrillic — likely untranslated.' });
+      else if (eff && eff.trim() === (s.source_text || '').trim()) out.push({ name: s.name, seq: s.seq, sev: 'hi', type: 'Untranslated', detail: 'Identical to the English source.' });
+      const ns = (s.source_text.match(/\d+/g) || []).slice().sort(), nf = (eff.match(/\d+/g) || []).slice().sort();
+      if (ns.join(',') !== nf.join(',')) out.push({ name: s.name, seq: s.seq, sev: 'mid', type: 'Numbers', detail: 'EN [' + ns.join(', ') + '] vs final [' + nf.join(', ') + ']' });
+      gloss.forEach(g => { if ((s.source_text || '').toLowerCase().includes(g.en.toLowerCase()) && eff && !eff.toLowerCase().includes(g.mn.toLowerCase())) out.push({ name: s.name, seq: s.seq, sev: 'mid', type: 'Term', detail: `'${g.en}' → expected '${g.mn}'` }); });
+      const dl = (s.draft_text || '').length; if (dl > 20 && eff) { const r = eff.length / dl; if (r > 2.2 || r < 0.45) out.push({ name: s.name, seq: s.seq, sev: 'lo', type: 'Length', detail: 'Final ~' + Math.round(r * 100) + '% of draft length.' }); }
+    });
+    return out;
+  }
+  function openQA() {
+    const issues = computeQA();
+    const body = issues.length
+      ? `<div style="font-family:system-ui">${issues.map(it => `<div class="qa-row" data-name="${it.name}"><span class="qa-badge qa-${it.sev}">${esc(it.type)}</span><div><div class="qa-seq">§${it.seq}</div><div class="qa-detail">${esc(it.detail)}</div></div></div>`).join('')}</div>`
+      : '<p style="font-family:system-ui;color:var(--muted)">No issues found. 🎉</p>';
+    overlay('QA & consistency — ' + issues.length + ' issue(s)', body);
+    const ov = document.querySelector('#tpOverlay');
+    ov.querySelectorAll('.qa-row').forEach(r => r.addEventListener('click', () => { ov.classList.remove('open'); setCur(r.dataset.name); }));
   }
 
   // ---- actions ----
@@ -190,6 +230,8 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     else if (act === 'useDraft') accept(s, s.draft_text);
     else if (act === 'toggleAlt') $id('tpAlt')?.classList.toggle('open');
     else if (act === 'undo') { save(s, { status: s.ai_suggestion ? 'Suggested' : 'Pending', final_text: '' }); frappe.show_alert({ message: 'Reverted §' + s.seq, indicator: 'orange' }); }
+    else if (act === 'lock') { save(s, { status: 'Locked' }); frappe.show_alert({ message: 'Locked §' + s.seq, indicator: 'blue' }); }
+    else if (act === 'unlock') { save(s, { status: (s.final_text || '').trim() ? 'Edited' : 'Suggested' }); frappe.show_alert({ message: 'Unlocked §' + s.seq, indicator: 'orange' }); }
     else if (act === 'saveFinal') { const v = $id('tpFinal').value; const st = (v.trim() === (s.ai_suggestion || '').trim() || v.trim() === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited'; save(s, { final_text: v, status: st }); frappe.show_alert({ message: 'Saved §' + s.seq, indicator: 'green' }); }
   });
   root.addEventListener('submit', e => {
@@ -202,12 +244,17 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpBook').addEventListener('change', e => { S.project = e.target.value; const p = S.projects.find(x => x.name === S.project); S.glossary = p ? (p.glossary || '') : ''; S.cur = null; $id('tpDrawer').classList.remove('open'); loadSegs(); });
   $id('tpMSeg').onclick = () => setMode('segments');
   $id('tpMRead').onclick = () => setMode('reading');
+  $id('tpNext').onclick = jumpNext;
+  $id('tpQA').onclick = openQA;
+  $id('tpBiToggle').onclick = () => { S.bilingual = !S.bilingual; $id('tpBiToggle').textContent = S.bilingual ? 'Hide English' : 'Show English'; renderReader(); };
   document.addEventListener('keydown', e => {
-    if (!page.wrapper.is(':visible') || S.mode !== 'segments') return;
+    if (!page.wrapper.is(':visible')) return;
     if (/input|textarea|select/i.test((document.activeElement || {}).tagName || '')) return;
+    if (e.key === 'n' || e.key === 'N') { jumpNext(); return; }
+    if (S.mode !== 'segments') return;
     if (e.key === 'j' || e.key === 'J') move(1);
     else if (e.key === 'k' || e.key === 'K') move(-1);
-    else if (e.key === 'a' || e.key === 'A') { const s = curSeg(); if (s && s.ai_suggestion) accept(s, s.ai_suggestion); }
+    else if (e.key === 'a' || e.key === 'A') { const s = curSeg(); if (s && s.ai_suggestion && s.status !== 'Locked') accept(s, s.ai_suggestion); }
     else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); $id('tpFinal')?.focus(); }
   });
 
