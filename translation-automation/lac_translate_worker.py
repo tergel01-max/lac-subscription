@@ -141,14 +141,25 @@ def build_openai_client(erp):
 # --------------------------------------------------------------------------- #
 # Sentence segmentation
 # --------------------------------------------------------------------------- #
+# Abbreviations whose trailing period must NOT end a sentence.
+_ABBR = {"dr", "mr", "mrs", "ms", "prof", "st", "vs", "etc", "inc",
+         "ltd", "no", "fig", "al", "e.g", "i.e", "vol", "pp"}
+
+
 def split_sentences(text: str):
     """Lightweight sentence splitter that keeps terminal punctuation.
-    Works for Latin and Cyrillic; splits on . ! ? … followed by space/newline."""
+    Works for Latin and Cyrillic; splits on . ! ? … followed by whitespace.
+    Protects common abbreviations (e.g. 'Dr.') so they don't split."""
     text = text.replace("\r\n", "\n").strip()
     if not text:
         return []
-    parts = re.split(r"(?<=[.!?…])\s+", text)
-    return [p.strip() for p in parts if p.strip()]
+    protected = re.sub(
+        r"\b([A-Za-z]{1,4})\.",
+        lambda m: m.group(1) + "<DOT>" if m.group(1).lower() in _ABBR else m.group(0),
+        text,
+    )
+    parts = re.split(r"(?<=[.!?…])\s+", protected)
+    return [p.strip().replace("<DOT>", ".") for p in parts if p.strip()]
 
 
 def align_draft(src_sentences, draft_sentences):

@@ -122,6 +122,10 @@ def test_segmentation():
     aligned = w.align_draft(["a", "b", "c"], ["x", "y"])
     check("align covers all source sentences", len(aligned) == 3)
 
+    # abbreviations must not split (regression from the MMOH book test)
+    abbr = w.split_sentences("Based on Dr. Masquelier's work. It was groundbreaking.")
+    check("does not split on 'Dr.'", len(abbr) == 2 and abbr[0].startswith("Based on Dr. Masquelier"))
+
 
 def test_run_no_dropped_sentences():
     # 10 pending segments -> batches of 8 + 2; model drops one in batch 1
