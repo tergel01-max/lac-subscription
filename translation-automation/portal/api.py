@@ -107,6 +107,72 @@ def _docx_paragraphs(file_url):
     return out
 
 
+def _pdf_paragraphs(file_url):
+    """Extract (style, text) paragraphs from a PDF using font size to spot
+    headings. Drops page numbers, repeated running headers/footers and
+    number-table rows; de-hyphenates line-break hyphens; merges body lines into
+    paragraphs. Headings get style 'heading' so the chapter logic picks them up."""
+    content = _read_docx_content(file_url)
+    if isinstance(content, str):
+        content = content.encode("utf-8", "ignore")
+    import fitz
+    doc = fitz.open(stream=io.BytesIO(content), filetype="pdf")
+    pages, sizes, linecount = [], {}, {}
+    for pno in range(doc.page_count):
+        d = doc.load_page(pno).get_text("dict")
+        lines = []
+        for b in d.get("blocks", []):
+            for l in b.get("lines", []):
+                spans = l.get("spans", [])
+                t = "".join(x.get("text", "") for x in spans).strip()
+                if not t:
+                    continue
+                sz = max((x.get("size", 0) for x in spans), default=0)
+                lines.append((t, sz))
+                sizes[round(sz)] = sizes.get(round(sz), 0) + len(t)
+                k = t.lower()[:40]
+                linecount[k] = linecount.get(k, 0) + 1
+        pages.append(lines)
+    if not sizes:
+        return []
+    body = max(sizes, key=sizes.get)
+    rep = {k for k, c in linecount.items() if c >= max(3, doc.page_count * 0.15) and len(k) < 40}
+
+    out, buf = [], []
+
+    def flush():
+        if buf:
+            out.append(("normal", " ".join(buf)))
+            buf[:] = []
+
+    for lines in pages:
+        for t, sz in lines:
+            if t.lower()[:40] in rep:
+                continue
+            if re.match(r"^\s*\d{1,3}\s*$", t) or _EN_NUM_ROW.match(t):
+                continue
+            letters = [c for c in t if c.isalpha()]
+            is_head = (sz >= body + 2 and 2 <= len(t) < 80 and len(letters) >= 2
+                       and not t.endswith((".", "!", "?", ",")))
+            if is_head:
+                flush()
+                out.append(("heading", t))
+            elif buf and buf[-1].endswith("-"):
+                buf[-1] = buf[-1][:-1] + t
+            else:
+                buf.append(t)
+        flush()
+    return out
+
+
+def _source_paragraphs(file_ref):
+    """Dispatch to the PDF or DOCX extractor by the file's extension."""
+    url = file_ref or ""
+    if not url.lower().endswith(".pdf") and frappe.db.exists("File", file_ref):
+        url = frappe.db.get_value("File", file_ref, "file_url") or url
+    return _pdf_paragraphs(file_ref) if url.lower().endswith(".pdf") else _docx_paragraphs(file_ref)
+
+
 # --------------------------------------------------------------------------- #
 # OpenAI helpers
 # --------------------------------------------------------------------------- #
@@ -692,8 +758,8 @@ _EN_ROMAN = re.compile(r"^[ivxlcdm]+$", re.I)
 def _clean_en_sentences(file_ref):
     """English body as sentences, print artifacts & number-tables stripped,
     each tagged with its running chapter. Heading lines set the chapter but
-    are not emitted as alignable source."""
-    paras = _docx_paragraphs(file_ref)
+    are not emitted as alignable source. Accepts a PDF or DOCX source."""
+    paras = _source_paragraphs(file_ref)
     out = []
     chapter = "Front matter"
     for style, text in paras:
