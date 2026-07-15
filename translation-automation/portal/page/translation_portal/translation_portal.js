@@ -26,10 +26,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       <div class="tp-spacer"></div>
       <div class="tp-prog"><div class="row"><span>Finalized</span><b id="tpProgLabel">—</b></div><div class="tp-track"><div class="tp-fill" id="tpProgFill" style="width:0"></div></div></div>
       <div class="tp-acts">
-        <button class="tp-btn ghost" id="tpNext">⇥ Next to do</button>
+        <button class="tp-btn ghost" id="tpNext">⇥ Next</button>
         <button class="tp-btn ghost" id="tpQA">✓ QA</button>
-        <button class="tp-btn ghost" id="tpGloss">📑 Glossary</button>
-        <button class="tp-btn ghost" id="tpExport">⬇ Export</button>
+        <button class="tp-btn ghost" id="tpImport">＋ Import</button>
+        <button class="tp-btn ghost" id="tpGen">✨ AI</button>
+        <button class="tp-btn ghost" id="tpGloss">📑 Gloss</button>
+        <button class="tp-btn ghost" id="tpTxt">⬇ txt</button>
+        <button class="tp-btn ghost" id="tpDocx">📄 docx</button>
         <button class="tp-btn ghost tp-icon" id="tpTheme" title="Toggle theme">◐</button>
       </div>
     </div>
@@ -95,11 +98,14 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       if (!locked) {
         inner += `<div class="cta"><button class="tp-btn primary" data-act="acceptAI">✔ Accept</button>`;
         if (s.ai_alternative) inner += `<button class="alt-toggle" data-act="toggleAlt">▾ Alternative</button>`;
-        inner += `</div>`;
+        inner += `<button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button></div>`;
         if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
       }
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div>${inner}</div>`;
-    } else ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div><div class="body"><span class="nochange">Not generated yet — run the AI pass.</span></div></div>`;
+    } else {
+      const gen = locked ? '' : `<div class="cta"><button class="tp-btn" data-act="regen">✨ Generate suggestion</button></div>`;
+      ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div><div class="body"><span class="nochange">Not generated yet.</span></div>${gen}</div>`;
+    }
 
     let doneBar = '';
     if (locked) doneBar = `<div class="tp-donebar locked"><span>🔒 Locked · editor signed off</span><button class="tp-btn ghost" data-act="unlock" style="padding:4px 11px;font-size:12px">Unlock</button></div>`;
@@ -232,6 +238,14 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     else if (act === 'undo') { save(s, { status: s.ai_suggestion ? 'Suggested' : 'Pending', final_text: '' }); frappe.show_alert({ message: 'Reverted §' + s.seq, indicator: 'orange' }); }
     else if (act === 'lock') { save(s, { status: 'Locked' }); frappe.show_alert({ message: 'Locked §' + s.seq, indicator: 'blue' }); }
     else if (act === 'unlock') { save(s, { status: (s.final_text || '').trim() ? 'Edited' : 'Suggested' }); frappe.show_alert({ message: 'Unlocked §' + s.seq, indicator: 'orange' }); }
+    else if (act === 'regen') {
+      frappe.prompt([{ fieldname: 'hint', fieldtype: 'Small Text', label: 'Optional instruction (leave blank to just retry)' }],
+        v => {
+          frappe.show_alert({ message: 'Regenerating §' + s.seq + '…', indicator: 'blue' });
+          frappe.call({ method: 'lac_translation.api.regenerate', args: { segment: s.name, hint: v.hint || '' } })
+            .then(r => { const d = r.message || {}; Object.assign(s, { ai_suggestion: d.mn, ai_alternative: d.alt, ai_rationale: d.notes, status: 'Suggested' }); renderAll(); frappe.show_alert({ message: 'Regenerated §' + s.seq, indicator: 'green' }); });
+        }, 'Regenerate suggestion', 'Run');
+    }
     else if (act === 'saveFinal') { const v = $id('tpFinal').value; const st = (v.trim() === (s.ai_suggestion || '').trim() || v.trim() === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited'; save(s, { final_text: v, status: st }); frappe.show_alert({ message: 'Saved §' + s.seq, indicator: 'green' }); }
   });
   root.addEventListener('submit', e => {
@@ -268,7 +282,36 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     ov.classList.add('open');
   }
   $id('tpGloss').onclick = () => overlay('Glossary / style guide', '<pre>' + esc(S.glossary || 'No glossary set for this project.') + '</pre>');
-  $id('tpExport').onclick = () => { const txt = S.segs.map(s => s.final_text || s.ai_suggestion || s.draft_text || '').join('\n'); const b = new Blob([txt], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (S.projects.find(p => p.name === S.project)?.title || 'book') + '_MN.txt'; a.click(); };
+  $id('tpTxt').onclick = () => { const txt = S.segs.map(s => s.final_text || s.ai_suggestion || s.draft_text || '').join('\n'); const b = new Blob([txt], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (S.projects.find(p => p.name === S.project)?.title || 'book') + '_MN.txt'; a.click(); };
+  $id('tpDocx').onclick = () => { if (!S.project) return; frappe.show_alert({ message: 'Building .docx…', indicator: 'blue' }); frappe.call({ method: 'lac_translation.api.export_docx', args: { project: S.project } }).then(r => { if (r.message && r.message.file_url) window.open(r.message.file_url, '_blank'); }); };
+  $id('tpGen').onclick = () => { if (!S.project) return; frappe.confirm('Generate AI suggestions for all Pending segments in this book? (runs in the background)', () => { frappe.call({ method: 'lac_translation.api.generate', args: { project: S.project } }).then(() => frappe.show_alert({ message: 'Queued — suggestions will appear as it runs.', indicator: 'blue' })); }); };
+  $id('tpImport').onclick = openImport;
+
+  function openImport() {
+    const d = new frappe.ui.Dialog({
+      title: 'Import a book', size: 'large',
+      fields: [
+        { fieldname: 'title', fieldtype: 'Data', label: 'Book title', reqd: 1 },
+        { fieldname: 'model', fieldtype: 'Data', label: 'OpenAI model', default: 'gpt-4o' },
+        { fieldname: 'english', fieldtype: 'Attach', label: 'English (.docx)', reqd: 1 },
+        { fieldname: 'mongolian', fieldtype: 'Attach', label: 'Mongolian draft (.docx, optional)' },
+        { fieldname: 'glossary', fieldtype: 'Small Text', label: 'Glossary / style (optional)' },
+      ],
+      primary_action_label: 'Import',
+      primary_action(v) {
+        d.hide(); frappe.show_alert({ message: 'Importing… this can take a moment', indicator: 'blue' });
+        frappe.call({ method: 'lac_translation.api.import_book', args: { title: v.title, english_file_url: v.english, mongolian_file_url: v.mongolian || '', model: v.model || 'gpt-4o', glossary: v.glossary || '' } })
+          .then(r => { const m = r.message || {}; frappe.show_alert({ message: 'Imported ' + (m.segments || 0) + ' segments', indicator: 'green' }); loadProjects().then(() => { S.project = m.project; const sel = $id('tpBook'); if (sel) sel.value = m.project; const p = S.projects.find(x => x.name === S.project); S.glossary = p ? (p.glossary || '') : ''; S.cur = null; loadSegs(); }); });
+      },
+    });
+    d.show();
+  }
+
+  frappe.realtime.on('lac_translation_progress', d => {
+    if (!d || d.project !== S.project) return;
+    frappe.show_alert({ message: 'AI: ' + d.done + '/' + d.total + '…', indicator: 'blue' });
+    if (d.done >= d.total) loadSegs();
+  });
   $id('tpTheme').onclick = () => root.classList.toggle('tp-dark');
 
   loadProjects();
