@@ -1152,28 +1152,16 @@ def align_gapfill(project, english_file, model="gpt-4o", batch=12):
     return {"queued": True}
 
 
-def _align_gapfill_job(project, english_file, model="gpt-4o", batch=12):
-    headers = _headers()
-    batch = int(batch)
-    en = _clean_en_sentences(english_file)
-    en = [e for e in en
-          if "....." not in e["text"] and not _EN_NUM_ROW.match(e["text"].strip())]
-    en_texts = [e["text"] for e in en]
-    N = len(en_texts)
+def _gapfill_once(project, headers, en, en_texts, N, model, batch, half):
+    """One gap-fill pass. Returns (newly_aligned, anchors, blank_runs, in_tok, out_tok)."""
     segs = frappe.get_all("Translation Segment", filters={"project": project},
                           fields=["name", "seq", "draft_text", "source_text"], order_by="seq asc")
     P = len(segs)
-    if not N or not P:
-        return {"error": "missing"}
-
-    # locate an EN index from a stored source_text (by its first 40 chars)
     pref = {}
     for i, t in enumerate(en_texts):
         k = t[:40]
         if k not in pref:
             pref[k] = i
-
-    # dense anchors from already-aligned segments, kept strictly increasing
     raw = []
     for pos, s in enumerate(segs):
         src = (s.get("source_text") or "").strip()
@@ -1189,19 +1177,16 @@ def _align_gapfill_job(project, english_file, model="gpt-4o", batch=12):
             anchors.append((mp, ei))
             last = ei
 
-    # contiguous runs of still-blank segments
     runs, cur = [], []
     for pos, s in enumerate(segs):
         if (s.get("source_text") or "").strip():
             if cur:
-                runs.append(cur)
-                cur = []
+                runs.append(cur); cur = []
         else:
             cur.append(pos)
     if cur:
         runs.append(cur)
 
-    half = batch + 30
     written = 0
     in_tok = out_tok = 0
     for run in runs:
@@ -1236,9 +1221,41 @@ def _align_gapfill_job(project, english_file, model="gpt-4o", batch=12):
             i += batch
         frappe.publish_realtime("lac_translation_progress",
                                 {"project": project, "done": written, "total": P})
+    return written, len(anchors), len(runs), in_tok, out_tok
 
-    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
-    summary = {"anchors": len(anchors), "blank_runs": len(runs), "newly_aligned": written,
-               "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
+
+def _align_gapfill_job(project, english_file, model="gpt-4o", batch=12,
+                       max_iters=4, min_new=4):
+    """Iterated gap-fill. Each pass turns the previous pass's new matches into
+    anchors, so coverage cascades into anchor-starved regions. Stops when a
+    pass adds fewer than min_new, or after max_iters."""
+    headers = _headers()
+    batch = int(batch)
+    max_iters = int(max_iters)
+    min_new = int(min_new)
+    en = _clean_en_sentences(english_file)
+    en = [e for e in en
+          if "....." not in e["text"] and not _EN_NUM_ROW.match(e["text"].strip())]
+    en_texts = [e["text"] for e in en]
+    N = len(en_texts)
+    if not N:
+        return {"error": "missing english"}
+    half = batch + 30
+
+    passes = []
+    tot_new = tot_in = tot_out = 0
+    for it in range(max_iters):
+        new, nanch, nruns, itok, otok = _gapfill_once(
+            project, headers, en, en_texts, N, model, batch, half)
+        tot_new += new
+        tot_in += itok
+        tot_out += otok
+        passes.append({"pass": it + 1, "anchors": nanch, "blank_runs": nruns, "newly_aligned": new})
+        if new < min_new:
+            break
+
+    cost = round(tot_in / 1e6 * 2.5 + tot_out / 1e6 * 10.0, 4)
+    summary = {"passes": passes, "total_newly_aligned": tot_new,
+               "prompt_tokens": tot_in, "completion_tokens": tot_out, "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
