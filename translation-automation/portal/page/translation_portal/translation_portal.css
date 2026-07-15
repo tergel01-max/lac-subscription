@@ -105,6 +105,11 @@
 .qa-seq{font-weight:700;font-size:13px}
 .qa-detail{font-size:13px;color:#667;opacity:.9}
 .tp-overlay.tp-dark .qa-detail{color:#9BAEAB}
+.tp-terms{width:100%;border-collapse:collapse;font-size:13.5px}
+.tp-terms th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8a9a98;padding:6px 8px;border-bottom:1px solid rgba(128,128,128,.25)}
+.tp-terms td{padding:7px 8px;border-bottom:1px solid rgba(128,128,128,.15);vertical-align:middle}
+.tp-termadd{display:flex;gap:8px;margin-top:14px}
+.tp-termadd input{flex:1;border:1px solid rgba(128,128,128,.3);background:transparent;color:inherit;border-radius:9px;padding:8px 11px;font-size:13.5px;font-family:system-ui}
 .tp .tp-seghead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .tp .tp-seghead h2{margin:0;font-size:14px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
 .tp .tp-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:99px;font-size:12px;font-weight:700}

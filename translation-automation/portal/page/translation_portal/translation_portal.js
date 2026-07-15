@@ -3,7 +3,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
   const STATUS = ['Pending', 'Suggested', 'Accepted', 'Edited', 'Rejected', 'Locked'];
   const DONE = s => s === 'Accepted' || s === 'Edited' || s === 'Locked';
-  const S = { projects: [], project: null, glossary: '', segs: [], cur: null, mode: 'segments', filter: 'All', q: '', bilingual: false };
+  const S = { projects: [], project: null, glossary: '', segs: [], terms: [], cur: null, mode: 'segments', filter: 'All', q: '', bilingual: false };
   const esc = s => (s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const color = st => 'var(--s-' + st + ')';
 
@@ -28,6 +28,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       <div class="tp-acts">
         <button class="tp-btn ghost" id="tpNext">⇥ Next</button>
         <button class="tp-btn ghost" id="tpQA">✓ QA</button>
+        <button class="tp-btn ghost" id="tpTerms">📕 Terms</button>
         <button class="tp-btn ghost" id="tpImport">＋ Import</button>
         <button class="tp-btn ghost" id="tpGen">✨ AI</button>
         <button class="tp-btn ghost" id="tpGloss">📑 Gloss</button>
@@ -79,12 +80,16 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         if (S.projects.length) { S.project = S.projects[0].name; S.glossary = S.projects[0].glossary || ''; return loadSegs(); }
       });
   }
+  function loadTerms() {
+    return frappe.db.get_list('Translation Term', { filters: { project: S.project }, fields: ['name', 'source_term', 'target_term', 'note'], limit: 0 })
+      .then(r => { S.terms = r || []; }).catch(() => { S.terms = []; });
+  }
   function loadSegs() {
-    return frappe.db.get_list('Translation Segment', {
+    return loadTerms().then(() => frappe.db.get_list('Translation Segment', {
       filters: { project: S.project },
       fields: ['name', 'seq', 'chapter', 'status', 'source_text', 'draft_text', 'ai_suggestion', 'ai_alternative', 'ai_rationale', 'final_text', 'reviewer_comment'],
       order_by: 'seq asc', limit: 0,
-    }).then(r => { S.segs = r || []; if (!curSeg()) S.cur = S.segs.length ? S.segs[0].name : null; renderAll(); });
+    })).then(r => { S.segs = r || []; if (!curSeg()) S.cur = S.segs.length ? S.segs[0].name : null; renderAll(); });
   }
 
   // ---- shared editor ----
@@ -98,7 +103,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       if (!locked) {
         inner += `<div class="cta"><button class="tp-btn primary" data-act="acceptAI">✔ Accept</button>`;
         if (s.ai_alternative) inner += `<button class="alt-toggle" data-act="toggleAlt">▾ Alternative</button>`;
-        inner += `<button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button></div>`;
+        inner += `<button class="tp-btn" data-act="addterm">＋ Term</button><button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button></div>`;
         if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
       }
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div>${inner}</div>`;
@@ -196,7 +201,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     return out;
   }
   function computeQA() {
-    const out = [], gloss = parseGlossary(S.glossary);
+    const out = [], gloss = parseGlossary(S.glossary).concat((S.terms || []).map(t => ({ en: t.source_term, mn: t.target_term })));
     S.segs.forEach(s => {
       const eff = s.final_text || s.ai_suggestion || s.draft_text || '';
       if (DONE(s.status) && !(s.final_text || '').trim()) out.push({ name: s.name, seq: s.seq, sev: 'hi', type: 'Empty final', detail: 'Marked ' + s.status + ' but Final is empty.' });
@@ -238,6 +243,17 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     else if (act === 'undo') { save(s, { status: s.ai_suggestion ? 'Suggested' : 'Pending', final_text: '' }); frappe.show_alert({ message: 'Reverted §' + s.seq, indicator: 'orange' }); }
     else if (act === 'lock') { save(s, { status: 'Locked' }); frappe.show_alert({ message: 'Locked §' + s.seq, indicator: 'blue' }); }
     else if (act === 'unlock') { save(s, { status: (s.final_text || '').trim() ? 'Edited' : 'Suggested' }); frappe.show_alert({ message: 'Unlocked §' + s.seq, indicator: 'orange' }); }
+    else if (act === 'addterm') {
+      frappe.prompt([
+        { fieldname: 's', fieldtype: 'Data', label: 'English term', reqd: 1 },
+        { fieldname: 't', fieldtype: 'Data', label: 'Approved Mongolian', reqd: 1 },
+        { fieldname: 'apply', fieldtype: 'Check', label: 'Apply to the whole book now (re-generate other occurrences)' },
+      ], v => {
+        const m = v.apply ? 'lac_translation.api.apply_term' : 'lac_translation.api.add_term';
+        frappe.call({ method: m, args: { project: S.project, source_term: v.s, target_term: v.t } })
+          .then(r => { loadTerms(); frappe.show_alert({ message: v.apply ? ('Applying to ' + ((r.message || {}).affected || 0) + ' segment(s)…') : 'Term added', indicator: v.apply ? 'blue' : 'green' }); });
+      }, 'Add approved term', 'Save');
+    }
     else if (act === 'regen') {
       frappe.prompt([{ fieldname: 'hint', fieldtype: 'Small Text', label: 'Optional instruction (leave blank to just retry)' }],
         v => {
@@ -286,6 +302,38 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpDocx').onclick = () => { if (!S.project) return; frappe.show_alert({ message: 'Building .docx…', indicator: 'blue' }); frappe.call({ method: 'lac_translation.api.export_docx', args: { project: S.project } }).then(r => { if (r.message && r.message.file_url) window.open(r.message.file_url, '_blank'); }); };
   $id('tpGen').onclick = () => { if (!S.project) return; frappe.confirm('Generate AI suggestions for all Pending segments in this book? (runs in the background)', () => { frappe.call({ method: 'lac_translation.api.generate', args: { project: S.project } }).then(() => frappe.show_alert({ message: 'Queued — suggestions will appear as it runs.', indicator: 'blue' })); }); };
   $id('tpImport').onclick = openImport;
+  $id('tpTerms').onclick = openTerms;
+
+  function openTerms() {
+    const rows = (S.terms || []).map(t => {
+      const uses = S.segs.filter(s => (s.source_text || '').toLowerCase().includes((t.source_term || '').toLowerCase())).length;
+      const off = S.segs.filter(s => { const eff = s.final_text || s.ai_suggestion || s.draft_text || ''; return (s.source_text || '').toLowerCase().includes((t.source_term || '').toLowerCase()) && eff && !eff.toLowerCase().includes((t.target_term || '').toLowerCase()); }).length;
+      return `<tr><td><b>${esc(t.source_term)}</b></td><td>${esc(t.target_term)}</td><td style="text-align:center">${uses}</td><td style="text-align:center;color:${off ? 'var(--s-Suggested)' : 'var(--s-Accepted)'};font-weight:700">${off}</td><td><button class="tp-btn" data-tapply="${esc(t.source_term)}|||${esc(t.target_term)}" style="padding:3px 9px;font-size:12px">Apply everywhere</button></td></tr>`;
+    }).join('') || '<tr><td colspan="5" style="color:var(--faint);padding:14px">No terms yet — add one below.</td></tr>';
+    const body = `<div style="font-family:system-ui">
+      <table class="tp-terms"><thead><tr><th>Source (EN)</th><th>Approved (MN)</th><th>Uses</th><th>Off</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="tp-termadd"><input id="tt_s" placeholder="English term"><input id="tt_t" placeholder="Approved Mongolian"><button class="tp-btn primary" id="tt_add">Add</button><button class="tp-btn" id="tt_apply">Add + apply</button></div>
+      <div style="font-size:12px;color:var(--faint);margin-top:8px">“Uses” = segments containing the English term. “Off” = those not yet using the approved translation. “Apply everywhere” re-generates the off ones (locked segments are left alone).</div>
+    </div>`;
+    overlay('Termbase — ' + (S.terms || []).length + ' term(s)', body);
+    const ov = document.querySelector('#tpOverlay');
+    const add = (apply) => {
+      const s = ov.querySelector('#tt_s').value.trim(), t = ov.querySelector('#tt_t').value.trim();
+      if (!s || !t) return;
+      const m = apply ? 'lac_translation.api.apply_term' : 'lac_translation.api.add_term';
+      frappe.call({ method: m, args: { project: S.project, source_term: s, target_term: t } })
+        .then(r => { frappe.show_alert({ message: apply ? ('Applying to ' + ((r.message || {}).affected || 0) + '…') : 'Term added', indicator: 'blue' }); loadTerms().then(openTerms); });
+    };
+    ov.querySelector('#tt_add').onclick = () => add(false);
+    ov.querySelector('#tt_apply').onclick = () => add(true);
+    ov.querySelectorAll('[data-tapply]').forEach(b => b.onclick = () => {
+      const [s, t] = b.getAttribute('data-tapply').split('|||');
+      frappe.confirm('Re-generate all non-locked segments to use “' + s + '” → “' + t + '”?', () => {
+        frappe.call({ method: 'lac_translation.api.apply_term', args: { project: S.project, source_term: s, target_term: t } })
+          .then(r => { ov.classList.remove('open'); frappe.show_alert({ message: 'Applying to ' + ((r.message || {}).affected || 0) + ' segment(s)…', indicator: 'blue' }); });
+      });
+    });
+  }
 
   function openImport() {
     const d = new frappe.ui.Dialog({

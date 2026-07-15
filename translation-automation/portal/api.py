@@ -143,6 +143,26 @@ def _openai(model, glossary, items, headers=None, hint=""):
 
 
 # --------------------------------------------------------------------------- #
+# termbase
+# --------------------------------------------------------------------------- #
+def _termbase(project):
+    return frappe.get_all("Translation Term", filters={"project": project},
+                          fields=["source_term", "target_term"])
+
+
+def _eff_glossary(proj):
+    """Project glossary + the approved termbase, fed to every AI call so
+    terminology stays consistent across the whole book."""
+    base = proj.glossary or ""
+    terms = _termbase(proj.name)
+    if terms:
+        base += ("\n\nAPPROVED TERMINOLOGY (use these EXACTLY and consistently; "
+                 "adapt Mongolian case endings but keep the term):\n"
+                 + "\n".join("- %s = %s" % (t.source_term, t.target_term) for t in terms))
+    return base
+
+
+# --------------------------------------------------------------------------- #
 # whitelisted API
 # --------------------------------------------------------------------------- #
 @frappe.whitelist()
@@ -189,7 +209,7 @@ def generate(project, model=None):
 def _generate_job(project, model=None):
     proj = frappe.get_doc("Translation Project", project)
     model = model or proj.model or "gpt-4o-mini"
-    glossary = proj.glossary or ""
+    glossary = _eff_glossary(proj)
     price = PRICES.get(model, {"in": 0.15, "out": 0.60})
     headers = _headers()
     segs = frappe.get_all("Translation Segment", filters={"project": project, "status": "Pending"},
@@ -237,7 +257,7 @@ def regenerate(segment, hint=""):
     s = frappe.get_doc("Translation Segment", segment)
     proj = frappe.get_doc("Translation Project", s.project)
     model = proj.model or "gpt-4o-mini"
-    results, _u = _openai(model, proj.glossary or "",
+    results, _u = _openai(model, _eff_glossary(proj),
                           [{"id": 1, "source_text": s.source_text, "draft_text": s.draft_text or ""}], hint=hint)
     r = results.get(1) or {"mn": "", "alt": "", "notes": ""}
     s.db_set("ai_suggestion", r["mn"]); s.db_set("ai_alternative", r["alt"])
@@ -267,3 +287,63 @@ def export_docx(project):
     fname = re.sub(r"[^\w\-]+", "_", (proj.title or project)) + "_MN.docx"
     f = save_file(fname, buf.getvalue(), "Translation Project", project, is_private=1)
     return {"file_url": f.file_url}
+
+
+@frappe.whitelist()
+def add_term(project, source_term, target_term, note=""):
+    """Create or update one approved term in the book's termbase."""
+    frappe.only_for("System Manager")
+    existing = frappe.db.exists("Translation Term", {"project": project, "source_term": source_term})
+    if existing:
+        d = frappe.get_doc("Translation Term", existing)
+        d.target_term = target_term
+        if note:
+            d.note = note
+        d.save(ignore_permissions=True)
+    else:
+        d = frappe.get_doc({"doctype": "Translation Term", "project": project,
+                            "source_term": source_term, "target_term": target_term,
+                            "note": note}).insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"term": d.name}
+
+
+@frappe.whitelist()
+def apply_term(project, source_term, target_term, note=""):
+    """Save the term, then re-generate every non-locked segment that contains
+    the source term but doesn't yet use the approved translation — propagating
+    the decision across the book."""
+    frappe.only_for("System Manager")
+    add_term(project, source_term, target_term, note)
+    names = frappe.get_all("Translation Segment", pluck="name", filters={
+        "project": project, "status": ["!=", "Locked"],
+        "source_text": ["like", "%" + source_term + "%"]})
+    frappe.enqueue("lac_translation.api._apply_term_job", queue="long", timeout=6000,
+                   project=project, source_term=source_term, target_term=target_term, names=names)
+    return {"affected": len(names)}
+
+
+def _apply_term_job(project, source_term, target_term, names):
+    proj = frappe.get_doc("Translation Project", project)
+    model = proj.model or "gpt-4o-mini"
+    glossary = _eff_glossary(proj)
+    headers = _headers()
+    hint = ("Use exactly '%s' as the Mongolian for the English term '%s' "
+            "(adapt case endings, keep the term)." % (target_term, source_term))
+    total = len(names)
+    for i, name in enumerate(names):
+        s = frappe.get_doc("Translation Segment", name)
+        eff = s.final_text or s.ai_suggestion or s.draft_text or ""
+        if target_term.lower() in eff.lower():
+            frappe.publish_realtime("lac_translation_progress", {"project": project, "done": i + 1, "total": total})
+            continue  # already consistent
+        results, _u = _openai(model, glossary,
+                              [{"id": 1, "source_text": s.source_text, "draft_text": s.final_text or s.draft_text or ""}],
+                              headers, hint=hint)
+        r = results.get(1)
+        if r:
+            s.db_set("ai_suggestion", r["mn"]); s.db_set("ai_alternative", r["alt"]); s.db_set("ai_rationale", r["notes"])
+            if s.status not in ("Accepted", "Edited"):
+                s.db_set("status", "Suggested")
+        frappe.db.commit()
+        frappe.publish_realtime("lac_translation_progress", {"project": project, "done": i + 1, "total": total})
