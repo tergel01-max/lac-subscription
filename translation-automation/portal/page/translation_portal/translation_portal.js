@@ -38,6 +38,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             <button class="tp-mi" id="tpImport">＋ Import book (EN + MN)</button>
             <button class="tp-mi" id="tpImportReviewed">⇄ Import reviewed translation</button>
             <button class="tp-mi" id="tpImportRev">⇄ Attach review to current book</button>
+            <button class="tp-mi" id="tpRealign">🎯 Re-align source (EN↔MN)</button>
             <div class="tp-mi-sep"></div>
             <button class="tp-mi" id="tpTxt">⬇ Export .txt</button>
             <button class="tp-mi" id="tpDocx">📄 Export .docx</button>
@@ -370,6 +371,17 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   document.addEventListener('click', () => { const m = $id('tpMenu'); if (m) m.classList.remove('open'); });
   $id('tpImport').onclick = openImport;
   $id('tpTerms').onclick = openTerms;
+  $id('tpRealign').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    const d = new frappe.ui.Dialog({
+      title: 'Re-align source (EN ↔ MN) with embeddings',
+      fields: [{ fieldname: 'english', fieldtype: 'Attach', label: 'English source (.docx)', reqd: 1 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Matches each Mongolian segment to its true English counterpart and fixes the source column + chapters. Runs in the background.</div>' }],
+      primary_action_label: 'Re-align',
+      primary_action(v) { d.hide(); frappe.call({ method: 'lac_translation.api.realign', args: { project: S.project, english_file: v.english } }).then(() => frappe.show_alert({ message: 'Re-aligning in the background…', indicator: 'blue' })); },
+    });
+    d.show();
+  };
   $id('tpImportReviewed').onclick = () => {
     const d = new frappe.ui.Dialog({
       title: 'Import reviewed translation', size: 'large',

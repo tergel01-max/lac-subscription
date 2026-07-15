@@ -566,3 +566,84 @@ def import_reviewed(title, mongolian_file_url, english_file_url=None, model="gpt
     proj.db_set("total_segments", seq)
     frappe.db.commit()
     return {"project": proj.name, "segments": seq, "suggestions": n_sug, "comments": n_cmt}
+
+
+# --------------------------------------------------------------------------- #
+# embedding-based re-alignment: fix each segment's source_text + chapter by
+# matching the Mongolian draft to its true English counterpart (cross-lingual).
+# --------------------------------------------------------------------------- #
+def _en_clean_paragraphs(file_ref):
+    """English body paragraphs, artifacts stripped, with a running chapter."""
+    paras = _docx_paragraphs(file_ref)
+    art = re.compile(r"binnenwerk\.indd|^\s*[\divxlcDIVXLC]+\s*$", re.I)
+    out = []
+    chapter = "Front matter"
+    for style, text in paras:
+        if not text or art.search(text):
+            continue
+        is_ch = (style and style.lower().startswith("heading")) or \
+                bool(re.match(r"^\d{1,2}\s*[A-Z]", text)) or \
+                (text == text.upper() and 1 < len(text.split()) <= 9 and not re.search(r"[.!?]$", text))
+        if is_ch:
+            chapter = re.sub(r"^\d+\s*", "", text).strip()[:130] or chapter
+        out.append({"text": text, "chapter": chapter})
+    return out
+
+
+def _embed(texts, headers):
+    vecs = []
+    for i in range(0, len(texts), 200):
+        chunk = [t if t.strip() else "-" for t in texts[i:i + 200]]
+        resp = make_post_request("https://api.openai.com/v1/embeddings", headers=headers,
+                                 data=json.dumps({"model": "text-embedding-3-small", "input": chunk}))
+        vecs.extend(d["embedding"] for d in resp["data"])
+    return vecs
+
+
+def _unit(v):
+    import math
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+@frappe.whitelist()
+def realign(project, english_file):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._realign_job", queue="long", timeout=8000,
+                   project=project, english_file=english_file)
+    return {"queued": True}
+
+
+def _realign_job(project, english_file):
+    headers = _headers()
+    en = _en_clean_paragraphs(english_file)
+    en_texts = [e["text"] for e in en]
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "draft_text"], order_by="seq asc")
+    if not en_texts or not segs:
+        return
+    en_vecs = [_unit(v) for v in _embed(en_texts, headers)]
+    mn_vecs = [_unit(v) for v in _embed([s["draft_text"] or "-" for s in segs], headers)]
+
+    cursor = 0
+    W = 25
+    total = len(segs)
+    for i, s in enumerate(segs):
+        mv = mn_vecs[i]
+        lo = max(0, cursor - 4)
+        hi = min(len(en_texts), cursor + W)
+        best, bi = -2.0, cursor
+        for j in range(lo, hi):
+            ev = en_vecs[j]
+            c = sum(a * b for a, b in zip(mv, ev))
+            if c > best:
+                best, bi = c, j
+        cursor = max(cursor, bi)
+        frappe.db.set_value("Translation Segment", s["name"],
+                            {"source_text": en_texts[bi], "chapter": en[bi]["chapter"]},
+                            update_modified=False)
+        if i % 100 == 0:
+            frappe.db.commit()
+            frappe.publish_realtime("lac_translation_progress", {"project": project, "done": i, "total": total})
+    frappe.db.commit()
+    frappe.publish_realtime("lac_translation_progress", {"project": project, "done": total, "total": total})
