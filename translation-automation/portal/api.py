@@ -890,14 +890,22 @@ def _align_llm_pairs(model, headers, win_en, mn_lines_text):
 
 
 @frappe.whitelist()
-def align_llm(project, english_file, model="gpt-4o", batch=12):
+def align_llm(project, english_file, model="gpt-4o", batch=12, from_seq=None, to_seq=None):
     frappe.only_for("System Manager")
     frappe.enqueue("lac_translation.api._align_llm_job", queue="long", timeout=12000,
-                   project=project, english_file=english_file, model=model, batch=int(batch))
+                   project=project, english_file=english_file, model=model, batch=int(batch),
+                   from_seq=from_seq, to_seq=to_seq)
     return {"queued": True}
 
 
-def _align_llm_job(project, english_file, model="gpt-4o", batch=12):
+def _align_llm_job(project, english_file, model="gpt-4o", batch=12,
+                   from_seq=None, to_seq=None):
+    """Align English onto the Mongolian segments with GPT-4o. The English
+    window is anchored to the running EN<->MN correspondence and extrapolated
+    at the true EN/MN rate, re-anchoring on every confident match, so it cannot
+    drift (the bug that made the plain sliding cursor fall off after ~90 segs).
+    Optional from_seq/to_seq restrict to a slice for cheap validation; segments
+    outside the slice are left untouched."""
     headers = _headers()
     batch = int(batch)
     en = _clean_en_sentences(english_file)
@@ -906,21 +914,36 @@ def _align_llm_job(project, english_file, model="gpt-4o", batch=12):
           if "....." not in e["text"] and not _EN_NUM_ROW.match(e["text"].strip())]
     en_texts = [e["text"] for e in en]
     N = len(en_texts)
-    segs = frappe.get_all("Translation Segment", filters={"project": project},
-                          fields=["name", "seq", "draft_text"], order_by="seq asc")
-    P = len(segs)
+    allsegs = frappe.get_all("Translation Segment", filters={"project": project},
+                             fields=["name", "seq", "draft_text"], order_by="seq asc")
+    P = len(allsegs)
     if not N or not P:
         return {"error": "missing english or segments"}
+    seq_of = {s["name"]: idx for idx, s in enumerate(allsegs)}  # position by name
 
-    cursor = 0
-    W = batch * 2 + 20            # generous English window per batch
+    fs = int(from_seq) if from_seq not in (None, "") else None
+    ts = int(to_seq) if to_seq not in (None, "") else None
+    segs = [s for s in allsegs
+            if (fs is None or s["seq"] >= fs) and (ts is None or s["seq"] <= ts)]
+    if not segs:
+        return {"error": "no segments in range"}
+
+    ratio = float(N) / float(P)
+    half = batch + 25                                  # English window half-width
+    # anchor: last confident (mn_position, en_index). Seed proportionally so a
+    # mid-book slice starts its window in the right place.
+    start_pos = seq_of[segs[0]["name"]]
+    anchor_mn, anchor_en = start_pos, int(round(start_pos * ratio))
     written = 0
     in_tok = out_tok = 0
+
     i = 0
-    while i < P:
+    while i < len(segs):
         chunk = segs[i:i + batch]
-        lo = max(0, cursor - 3)
-        hi = min(N, lo + W)
+        pos0 = seq_of[chunk[0]["name"]]                # global MN position of batch start
+        center = anchor_en + (pos0 - anchor_mn) * ratio
+        lo = max(0, int(round(center)) - half)
+        hi = min(N, lo + 2 * half)
         win_en = [(k, en_texts[k]) for k in range(lo, hi)]
         mn_lines = "\n".join("M%d: %s" % (n, (chunk[n]["draft_text"] or "")[:280])
                              for n in range(len(chunk)))
@@ -931,32 +954,30 @@ def _align_llm_job(project, english_file, model="gpt-4o", batch=12):
         in_tok += usage.get("prompt_tokens", 0)
         out_tok += usage.get("completion_tokens", 0)
 
-        used = []
         for n in range(len(chunk)):
             ens = [e for e in pairs.get(n, []) if lo <= e < hi]
             if ens:
                 ens = sorted(set(ens))
                 src = " ".join(en_texts[e] for e in ens)
                 vals = {"source_text": src, "chapter": en[ens[0]]["chapter"]}
-                used.extend(ens)
                 written += 1
+                anchor_mn = seq_of[chunk[n]["name"]]   # re-anchor to this match
+                anchor_en = ens[-1]
             else:
                 vals = {"source_text": "", "chapter": ""}
             frappe.db.set_value("Translation Segment", chunk[n]["name"], vals,
                                 update_modified=False)
 
-        if used:
-            cursor = min(max(used) + 1, N - 1)
-        else:
-            cursor = min(cursor + batch, N - 1)   # no matches: nudge forward, don't stall
         frappe.db.commit()
         frappe.publish_realtime("lac_translation_progress",
-                                {"project": project, "done": min(i + batch, P), "total": P})
+                                {"project": project, "done": min(i + batch, len(segs)),
+                                 "total": len(segs)})
         i += batch
 
     cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)   # gpt-4o pricing
-    summary = {"en_sentences": N, "mn_segments": P, "aligned": written,
-               "blank_polish_mode": P - written, "model": model,
+    summary = {"en_sentences": N, "mn_segments_total": P, "processed": len(segs),
+               "range": [fs, ts], "aligned": written,
+               "blank_polish_mode": len(segs) - written, "model": model,
                "prompt_tokens": in_tok, "completion_tokens": out_tok,
                "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
