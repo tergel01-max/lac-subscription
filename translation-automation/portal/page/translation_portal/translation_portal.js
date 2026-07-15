@@ -376,9 +376,10 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const d = new frappe.ui.Dialog({
       title: 'Re-align source (EN ↔ MN) with embeddings',
       fields: [{ fieldname: 'english', fieldtype: 'Attach', label: 'English source (.docx)', reqd: 1 },
-      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Matches each Mongolian segment to its true English counterpart and fixes the source column + chapters. Runs in the background.</div>' }],
+      { fieldname: 'threshold', fieldtype: 'Float', label: 'Confidence gate (0–1)', default: 0.40 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Cleans the English (drops page/print artifacts &amp; number tables), splits into sentences, then matches each Mongolian segment to its true English counterpart with a global (non-greedy) alignment. Segments below the confidence gate stay in Mongolian-polish mode (blank source) rather than showing a wrong pairing. Runs in the background.</div>' }],
       primary_action_label: 'Re-align',
-      primary_action(v) { d.hide(); frappe.call({ method: 'lac_translation.api.realign', args: { project: S.project, english_file: v.english } }).then(() => frappe.show_alert({ message: 'Re-aligning in the background…', indicator: 'blue' })); },
+      primary_action(v) { d.hide(); frappe.call({ method: 'lac_translation.api.align2', args: { project: S.project, english_file: v.english, threshold: v.threshold || 0.40 } }).then(() => frappe.show_alert({ message: 'Re-aligning in the background…', indicator: 'blue' })); },
     });
     d.show();
   };

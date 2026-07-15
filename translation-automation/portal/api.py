@@ -678,3 +678,160 @@ def _reset_alignment_job(project, clear_source=1):
             frappe.db.commit()
     frappe.db.commit()
     return {"reset": len(names)}
+
+
+# --------------------------------------------------------------------------
+# Alignment v2: clean -> sentence-split -> global banded DP over cross-lingual
+# embeddings, with a confidence gate. Replaces the old greedy _realign_job.
+# --------------------------------------------------------------------------
+
+_EN_NUM_ROW = re.compile(r"^[\d.,%\s\-–:/()]+$")   # table-cell number rows / page nos
+_EN_ROMAN = re.compile(r"^[ivxlcdm]+$", re.I)
+
+
+def _clean_en_sentences(file_ref):
+    """English body as sentences, print artifacts & number-tables stripped,
+    each tagged with its running chapter. Heading lines set the chapter but
+    are not emitted as alignable source."""
+    paras = _docx_paragraphs(file_ref)
+    out = []
+    chapter = "Front matter"
+    for style, text in paras:
+        t = (text or "").strip()
+        if not t:
+            continue
+        low = t.lower()
+        if "binnenwerk.indd" in low:                 # print artifact
+            continue
+        if _EN_NUM_ROW.match(t) or _EN_ROMAN.match(t):  # page no / number table cell
+            continue
+        is_ch = (style and style.lower().startswith("heading")) or \
+                bool(re.match(r"^\d{1,2}\s*[A-Z]", t)) or \
+                (t == t.upper() and 1 < len(t.split()) <= 9 and not re.search(r"[.!?]$", t))
+        if is_ch:
+            chapter = re.sub(r"^\d+\s*", "", t).strip()[:130] or chapter
+            continue
+        for s in _split_sentences(t):
+            s = s.strip()
+            if len(s) >= 2:
+                out.append({"text": s, "chapter": chapter})
+    return out
+
+
+def _align_dp(S, band):
+    """Monotonic (non-decreasing) assignment of each MN row j to an EN col e
+    that maximises total cosine, within a diagonal band. Allows many MN -> one
+    EN (Mongolian splits English sentences). Returns list of (col, score)."""
+    import numpy as np
+    P, N = S.shape
+    NEG = -1e9
+
+    def center(j):
+        return int(round(j * (N - 1) / max(1, (P - 1))))
+
+    def window(j):
+        c = center(j)
+        return max(0, c - band), min(N, c + band + 1)
+
+    idxN = np.arange(N)
+    dp = np.full(N, NEG)
+    lo, hi = window(0)
+    dp[lo:hi] = S[0, lo:hi]
+    back = [None] * P
+
+    for j in range(1, P):
+        # prefix max + argmax of previous row (enforces e(j) >= e(j-1)),
+        # fully vectorised: pm[e] = max_{e'<=e} dp[e'], pa[e] = its argmax
+        pm = np.maximum.accumulate(dp)
+        newmax = np.concatenate(([True], pm[1:] > pm[:-1]))
+        pa = np.maximum.accumulate(np.where(newmax, idxN, 0))
+        lo, hi = window(j)
+        ndp = np.full(N, NEG)
+        ndp[lo:hi] = S[j, lo:hi] + pm[lo:hi]
+        bj = np.full(N, -1, dtype="int64")
+        bj[lo:hi] = pa[lo:hi]
+        back[j] = bj
+        dp = ndp
+
+    e = int(np.argmax(dp))
+    path = [0] * P
+    for j in range(P - 1, -1, -1):
+        path[j] = e
+        if j > 0:
+            e = int(back[j][e])
+            if e < 0:
+                e = 0
+    return [(path[j], float(S[j, path[j]])) for j in range(P)]
+
+
+@frappe.whitelist()
+def align2(project, english_file, threshold=0.40, write=1):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._align2_job", queue="long", timeout=9000,
+                   project=project, english_file=english_file,
+                   threshold=float(threshold), write=int(write))
+    return {"queued": True}
+
+
+def _align2_job(project, english_file, threshold=0.40, write=1):
+    """Clean+align English onto the project's Mongolian segments. Writes
+    source_text + chapter only where confidence >= threshold; below that the
+    segment is left in Mongolian-polish mode (blank source). Prints a summary
+    and sample pairs so the threshold can be calibrated; returns that summary."""
+    import numpy as np
+    threshold = float(threshold)
+    write = int(write)
+    headers = _headers()
+    en = _clean_en_sentences(english_file)
+    en_texts = [e["text"] for e in en]
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "draft_text"], order_by="seq asc")
+    if not en_texts or not segs:
+        return {"error": "missing english or segments"}
+
+    EN = np.asarray([_unit(v) for v in _embed(en_texts, headers)], dtype="float64")
+    MN = np.asarray([_unit(v) for v in _embed([s["draft_text"] or "-" for s in segs], headers)],
+                    dtype="float64")
+    S = MN.dot(EN.T)                      # P x N cosine matrix
+    N = EN.shape[0]
+    band = max(35, int(N * 0.07))
+    matches = _align_dp(S, band)          # per MN seg: (en_col, score)
+
+    scores = sorted(m[1] for m in matches)
+    P = len(matches)
+    def pct(p):
+        return round(scores[min(P - 1, int(p / 100.0 * P))], 3)
+    hist = {"p10": pct(10), "p25": pct(25), "p50": pct(50),
+            "p75": pct(75), "p90": pct(90)}
+    kept = sum(1 for _, sc in matches if sc >= threshold)
+
+    if write:
+        for i, s in enumerate(segs):
+            col, sc = matches[i]
+            if sc >= threshold:
+                vals = {"source_text": en_texts[col], "chapter": en[col]["chapter"]}
+            else:
+                vals = {"source_text": "", "chapter": ""}
+            frappe.db.set_value("Translation Segment", s["name"], vals, update_modified=False)
+            if i % 100 == 0:
+                frappe.db.commit()
+                frappe.publish_realtime("lac_translation_progress",
+                                        {"project": project, "done": i, "total": P})
+        frappe.db.commit()
+        frappe.publish_realtime("lac_translation_progress",
+                                {"project": project, "done": P, "total": P})
+
+    # sample pairs spread across the book for eyeball calibration
+    samples = []
+    step = max(1, P // 18)
+    for i in range(0, P, step):
+        col, sc = matches[i]
+        samples.append({
+            "seq": segs[i]["seq"], "score": round(sc, 3),
+            "en": en_texts[col][:70], "mn": (segs[i]["draft_text"] or "")[:70],
+        })
+    summary = {"en_sentences": N, "mn_segments": P, "score_pctiles": hist,
+               "threshold": threshold, "kept": kept, "blanked": P - kept,
+               "written": bool(write), "samples": samples}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
