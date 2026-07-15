@@ -127,11 +127,18 @@ def _openai(model, glossary, items, headers=None, hint=""):
     """items: [{id, source_text, draft_text}] -> ({id:{mn,alt,notes}}, usage)."""
     headers = headers or _headers()
     lines = []
+    any_no_source = False
     for it in items:
-        lines.append("[%d] EN: %s" % (it["id"], it["source_text"]))
-        lines.append("     MN draft: %s" % (it["draft_text"] or "(none - translate from English)"))
+        if (it.get("source_text") or "").strip():
+            lines.append("[%d] EN: %s" % (it["id"], it["source_text"]))
+            lines.append("     MN draft: %s" % (it["draft_text"] or "(none - translate from English)"))
+        else:
+            any_no_source = True
+            lines.append("[%d] MN to polish (no English source): %s" % (it["id"], it["draft_text"] or ""))
     instr = (
-        "For EACH numbered item, act as the book editor. Return a JSON object: "
+        ("For items with no English source, polish the Mongolian for grammar, "
+         "naturalness and terminology only, PRESERVING its meaning (do not invent content). " if any_no_source else "")
+        + "For EACH numbered item, act as the book editor. Return a JSON object: "
         '{"items":[{"id":<int>,'
         '"mn":"<polished publication-ready book translation - prefer a bold natural rewrite>",'
         '"alt":"<a more faithful/literal alternative>",'
@@ -647,3 +654,27 @@ def _realign_job(project, english_file):
             frappe.publish_realtime("lac_translation_progress", {"project": project, "done": i, "total": total})
     frappe.db.commit()
     frappe.publish_realtime("lac_translation_progress", {"project": project, "done": total, "total": total})
+
+
+@frappe.whitelist()
+def reset_alignment(project, clear_source=1):
+    """Undo bad auto-alignment: clear chapter (and optionally the wrong
+    source_text) so segments group cleanly and AI runs in Mongolian-polish
+    mode. Keeps draft, suggestions and comments intact."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._reset_alignment_job", queue="long",
+                   timeout=3000, project=project, clear_source=int(clear_source))
+    return {"queued": True}
+
+
+def _reset_alignment_job(project, clear_source=1):
+    names = frappe.get_all("Translation Segment", pluck="name", filters={"project": project})
+    for i, n in enumerate(names):
+        vals = {"chapter": ""}
+        if clear_source:
+            vals["source_text"] = ""
+        frappe.db.set_value("Translation Segment", n, vals, update_modified=False)
+        if i % 200 == 0:
+            frappe.db.commit()
+    frappe.db.commit()
+    return {"reset": len(names)}
