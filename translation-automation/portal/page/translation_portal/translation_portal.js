@@ -53,9 +53,11 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       </div>
     </div>
   </div>`;
-  $(page.body).html(shell);
-  const root = page.body.querySelector('#tpRoot');
-  const $id = id => page.body.querySelector('#' + id);
+  const $body = $(page.body);
+  $body.html(shell);
+  const bodyEl = $body[0];
+  const root = bodyEl.querySelector('#tpRoot');
+  const $id = id => bodyEl.querySelector('#' + id);
   if ((document.documentElement.getAttribute('data-theme') || '') === 'dark' || document.body.classList.contains('dark')) root.classList.add('tp-dark');
 
   const curSeg = () => S.segs.find(x => x.name === S.cur);
