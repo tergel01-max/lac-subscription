@@ -62,15 +62,22 @@ SYSTEM_PROMPT = (
     "'тааралддаг' → 'агуулагддаг'). Avoid over-literal calques (e.g. 'empty "
     "products' → 'шим тэжээл багатай хүнс', not 'хоосон хүнс').\n"
     "- Fix typos and wrong word choices in the draft.\n\n"
-    "MEANING, IDIOM & TONE:\n"
-    "- Translate idioms and metaphors by MEANING, not literally (e.g. 'lift "
-    "himself to Nobel Prize heights' = seeking fame/self-promotion, not literally "
-    "reaching Nobel level).\n"
-    "- Preserve the author's tone and intent (humility, or critique of an "
-    "industry); do not overstate ('disturbs' = disrupts/challenges, not "
-    "necessarily 'damages').\n"
-    "- Do not leave foreign/technical jargon a general reader won't understand "
-    "untranslated; use the Mongolian term or briefly gloss it.\n\n"
+    "MEANING, IDIOM & TONE (be a bold editor, not a timid one):\n"
+    "- Prefer a confident, natural rewrite over a minimal one; restructure freely "
+    "so the sentence reads as native book prose.\n"
+    "- Translate idioms/metaphors by MEANING. Figurative statements about a "
+    "person's ambition, fame or status are NOT literal: 'lift himself to Nobel "
+    "Prize heights' means promote his own reputation/seek fame — render THAT "
+    "meaning (e.g. 'өөрийн нэр хүндийг Нобелийн шагналын өндөрлөгт хүргэх'), NOT "
+    "'reach Nobel level'.\n"
+    "- Render verbs by sense, not word-for-word ('follows the new needs' = 'шинэ "
+    "хэрэгцээнд нийцүүлэн', not 'хангахыг зорих').\n"
+    "- Preserve the author's tone; do not overstate ('disturbs' = disrupts, not "
+    "'damages').\n"
+    "- NEVER transliterate a descriptive foreign word a reader won't understand; "
+    "translate its meaning (e.g. 'magistral' work = 'өдөр тутмын мэргэжлийн ажил', "
+    "NOT 'магистрал'). Keep only established chemical names, proper nouns and "
+    "glossary terms in their given form.\n\n"
     "TERMINOLOGY (STRICT):\n"
     "- Render medical/scientific/chemical terms precisely and CONSISTENTLY per the "
     "project glossary (authoritative). Keep proper names, numbers, dates, dosages, "
@@ -253,8 +260,8 @@ def _improve_batch(client, model, glossary, batch):
     instructions = (
         "For EACH numbered item, act as the book editor. Return a JSON object: "
         '{"items":[{"id":<int>,'
-        '"mn":"<recommended polished book-style Mongolian>",'
-        '"alt":"<a more faithful/literal alternative, or empty string>",'
+        '"mn":"<the polished, publication-ready book translation — prefer the bold, natural rewrite>",'
+        '"alt":"<REQUIRED: a second, more literal/faithful rendering that stays closer to the source; must differ from mn unless the draft is already perfect>",'
         '"notes":"<one short line in Mongolian naming the key fixes; empty if unchanged>"}, ...]}. '
         "Return EXACTLY one element per input id, using the same ids. "
         "Do not merge, split, drop, reorder, or add items."
