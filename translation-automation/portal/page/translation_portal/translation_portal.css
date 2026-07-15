@@ -85,6 +85,8 @@
 .tp .tp-drawer{width:0;flex:none;border-left:1px solid var(--border);background:var(--surface);overflow:hidden;transition:width .22s ease}
 .tp .tp-drawer.open{width:440px}
 .tp .tp-drawerinner{width:440px;height:100%;overflow:auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:13px}
+.tp .tp-drawerinner > *{flex:0 0 auto}
+.tp .tp-inner > *{flex:0 0 auto}
 .tp .tp-drawerhead{display:flex;align-items:center;justify-content:space-between}
 @media (max-width:900px){ .tp .tp-drawer.open{width:100%;position:absolute;right:0;top:0;bottom:0;box-shadow:var(--shadow)} .tp .tp-drawerinner{width:100%} }
 
