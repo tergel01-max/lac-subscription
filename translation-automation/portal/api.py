@@ -1353,3 +1353,182 @@ def _align_range_job(project, english_file, from_seq, to_seq, en_from=None, en_t
                "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
+
+
+# --------------------------------------------------------------------------
+# Translation Completeness Audit: find English passages omitted from the
+# Mongolian, verify each is genuinely missing (not just summarised nearby),
+# draft the Mongolian, and write a review report attached to the project.
+# --------------------------------------------------------------------------
+
+def _omission_runs(english_file, project, min_run):
+    """Return [{chapter, after_seq, en_from, en_to, en_sents[], mn_before, mn_after}]
+    for runs of >= min_run consecutive body English sentences with no Mongolian."""
+    en = _clean_en_sentences(english_file)
+    en = [e for e in en
+          if "....." not in e["text"] and not _EN_NUM_ROW.match(e["text"].strip())]
+    en_texts = [e["text"] for e in en]
+    N = len(en_texts)
+    pref = {}
+    for i, t in enumerate(en_texts):
+        pref.setdefault(t[:40], i)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["seq", "source_text", "draft_text"], order_by="seq asc")
+    used = {}
+    byseq = {}
+    for s in segs:
+        byseq[s["seq"]] = s
+        src = (s.get("source_text") or "").strip()
+        if src:
+            idx = pref.get(src[:40])
+            if idx is not None:
+                used[idx] = s["seq"]
+    BODY_LO, BODY_HI = 132, 4815
+    back = {"Index", "LITERATURE", "ABOUT THE AUTHOR", "DISCLAIMER", "MASQUELIER"}
+    runs, cur = [], []
+    for i in range(N):
+        good = (i not in used) and BODY_LO <= i < BODY_HI and len(en_texts[i]) >= 60 \
+            and en[i]["chapter"] not in back
+        if good:
+            cur.append(i)
+        else:
+            if len(cur) >= min_run:
+                runs.append(cur)
+            cur = []
+    if len(cur) >= min_run:
+        runs.append(cur)
+
+    def mn_before(run):
+        j = run[0] - 1
+        while j >= 0:
+            if j in used:
+                return byseq.get(used[j], {}).get("draft_text") or ""
+            j -= 1
+        return ""
+
+    def mn_after(run):
+        j = run[-1] + 1
+        while j < N:
+            if j in used:
+                return byseq.get(used[j], {}).get("draft_text") or ""
+            j += 1
+        return ""
+
+    def ins_seq(run):
+        j = run[0] - 1
+        while j >= 0:
+            if j in used:
+                return used[j]
+            j -= 1
+        return None
+
+    out = []
+    for r in runs:
+        out.append({
+            "chapter": en[r[0]]["chapter"], "after_seq": ins_seq(r),
+            "en_from": r[0], "en_to": r[-1],
+            "en_sents": [en_texts[k] for k in r],
+            "mn_before": mn_before(r)[:400], "mn_after": mn_after(r)[:400],
+        })
+    return out
+
+
+def _omission_check(model, headers, glossary, gap):
+    """One call: verdict (missing/present) + Mongolian draft if missing."""
+    en_block = "\n".join("- " + s for s in gap["en_sents"])
+    instr = (
+        "A passage from an English book may be MISSING from its Mongolian "
+        "translation. Below is the Mongolian immediately BEFORE and AFTER the "
+        "spot, then the English passage. Decide whether this English content is "
+        "genuinely ABSENT from the surrounding Mongolian, or whether it is "
+        "actually PRESENT there (summarised or reworded). If it is absent, "
+        "produce a faithful, publication-ready Mongolian translation of the "
+        "whole passage. Return JSON: "
+        '{"verdict":"missing"|"present","mn":"<Mongolian translation if missing, else empty>"}.'
+    )
+    if glossary:
+        instr += "\n\nGlossary / approved terminology:\n" + glossary
+    user = (instr
+            + "\n\nMONGOLIAN BEFORE:\n" + (gap["mn_before"] or "(start)")
+            + "\n\nMONGOLIAN AFTER:\n" + (gap["mn_after"] or "(end)")
+            + "\n\nENGLISH PASSAGE:\n" + en_block)
+    payload = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": "You are a meticulous bilingual (English/Mongolian) book translator and editor. Output only valid JSON."},
+                            {"role": "user", "content": user}]}
+    resp = make_post_request("https://api.openai.com/v1/chat/completions",
+                             headers=headers, data=json.dumps(payload))
+    data = json.loads(resp["choices"][0]["message"]["content"])
+    return (data.get("verdict", "missing"), data.get("mn", ""), resp.get("usage", {}))
+
+
+@frappe.whitelist()
+def omission_report(project, english_file, min_run=6, model="gpt-4o"):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._omission_report_job", queue="long", timeout=15000,
+                   project=project, english_file=english_file, min_run=int(min_run), model=model)
+    return {"queued": True}
+
+
+def _esc(t):
+    return (t or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _omission_report_job(project, english_file, min_run=6, model="gpt-4o"):
+    headers = _headers()
+    min_run = int(min_run)
+    proj = frappe.get_doc("Translation Project", project)
+    glossary = _eff_glossary(proj)
+    gaps = _omission_runs(english_file, project, min_run)
+
+    in_tok = out_tok = 0
+    confirmed = []
+    for g in gaps:
+        try:
+            verdict, mn, usage = _omission_check(model, headers, glossary, g)
+        except Exception:
+            verdict, mn, usage = "missing", "", {}
+        in_tok += usage.get("prompt_tokens", 0)
+        out_tok += usage.get("completion_tokens", 0)
+        if verdict == "missing":
+            g["mn"] = mn
+            confirmed.append(g)
+        frappe.publish_realtime("lac_translation_progress",
+                                {"project": project, "done": len(confirmed), "total": len(gaps)})
+
+    n_sents = sum(len(g["en_sents"]) for g in confirmed)
+    rows = []
+    for g in confirmed:
+        rows.append(
+            '<div class="gap"><div class="loc">Chapter: <b>%s</b> &nbsp;·&nbsp; insert after Mongolian sentence #%s &nbsp;·&nbsp; %d sentences</div>'
+            '<div class="cols"><div class="en"><div class="lbl">English (missing)</div><p>%s</p></div>'
+            '<div class="mn"><div class="lbl">Proposed Mongolian</div><p>%s</p></div></div></div>'
+            % (_esc(g["chapter"]), g["after_seq"], len(g["en_sents"]),
+               _esc(" ".join(g["en_sents"])), _esc(g.get("mn", "")))
+        )
+    html = (
+        "<html><head><meta charset='utf-8'><title>Translation Completeness Audit — %s</title>"
+        "<style>body{font-family:system-ui,Arial,sans-serif;max-width:1000px;margin:24px auto;color:#1a1a1a}"
+        "h1{color:#00707E}.sum{background:#f2f7f8;border:1px solid #d7e6e8;padding:12px 16px;border-radius:8px;margin-bottom:20px}"
+        ".gap{border:1px solid #e2e2e2;border-radius:8px;margin:14px 0;padding:12px 14px}"
+        ".loc{font-size:12px;color:#666;margin-bottom:8px}.cols{display:flex;gap:16px}"
+        ".en,.mn{flex:1}.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#00707E;margin-bottom:4px}"
+        ".en p{background:#fff8f0;padding:8px;border-radius:6px}.mn p{background:#f0f8f4;padding:8px;border-radius:6px}"
+        "p{white-space:pre-wrap;line-height:1.5;margin:0}</style></head><body>"
+        "<h1>Translation Completeness Audit</h1>"
+        "<div class='sum'>Project <b>%s</b> · English source vs Mongolian translation.<br>"
+        "<b>%d</b> confirmed omitted passages (of %d candidate gaps scanned), totalling <b>%d</b> English sentences "
+        "with no Mongolian counterpart. Each shows a proposed Mongolian translation for the editor to review.</div>%s"
+        "</body></html>"
+        % (_esc(project), _esc(project), len(confirmed), len(gaps), n_sents, "".join(rows) or "<p>No substantial omissions found.</p>")
+    )
+
+    from frappe.utils.file_manager import save_file
+    fname = "omission_audit_%s.html" % project
+    f = save_file(fname, html.encode("utf-8"), "Translation Project", project, is_private=1)
+
+    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
+    summary = {"candidate_gaps": len(gaps), "confirmed_missing": len(confirmed),
+               "omitted_sentences": n_sents, "report_url": f.file_url,
+               "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
