@@ -102,7 +102,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     return loadTerms().then(loadSuggestions).then(() => frappe.db.get_list('Translation Segment', {
       filters: { project: S.project },
       fields: ['name', 'seq', 'chapter', 'status', 'source_text', 'draft_text', 'ai_suggestion', 'ai_alternative', 'ai_rationale', 'final_text', 'reviewer_comment'],
-      order_by: 'seq asc', limit: 0,
+      order_by: 'seq asc, creation asc', limit: 0,
     })).then(r => { S.segs = r || []; if (!curSeg()) S.cur = S.segs.length ? S.segs[0].name : null; renderAll(); });
   }
 
