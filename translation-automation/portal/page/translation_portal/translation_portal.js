@@ -40,6 +40,10 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             <button class="tp-mi" id="tpImportRev">⇄ Attach review to current book</button>
             <button class="tp-mi" id="tpRealign">🎯 Re-align source (EN↔MN)</button>
             <div class="tp-mi-sep"></div>
+            <button class="tp-mi" id="tpAudit">🔎 Find missing passages (audit)</button>
+            <button class="tp-mi" id="tpComplete">✚ Complete book — fill missing</button>
+            <button class="tp-mi" id="tpRevert">↩ Remove AI-filled passages</button>
+            <div class="tp-mi-sep"></div>
             <button class="tp-mi" id="tpTxt">⬇ Export .txt</button>
             <button class="tp-mi" id="tpDocx">📄 Export .docx</button>
           </div>
@@ -381,6 +385,37 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       primary_action(v) { d.hide(); frappe.call({ method: 'lac_translation.api.align_llm', args: { project: S.project, english_file: v.english } }).then(() => frappe.show_alert({ message: 'Re-aligning with GPT-4o in the background…', indicator: 'blue' })); },
     });
     d.show();
+  };
+  $id('tpAudit').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    const d = new frappe.ui.Dialog({
+      title: 'Find missing passages (completeness audit)',
+      fields: [{ fieldname: 'english', fieldtype: 'Attach', label: 'English source (PDF or .docx)', reqd: 1 },
+      { fieldname: 'min_run', fieldtype: 'Int', label: 'Minimum passage length (sentences)', default: 6 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Scans the English source for passages that have no Mongolian counterpart, has GPT-4o confirm each is genuinely missing (not just summarised), drafts the Mongolian, and produces a review report. Does <b>not</b> change the book. Runs in the background.</div>' }],
+      primary_action_label: 'Run audit',
+      primary_action(v) { d.hide(); frappe.call({ method: 'lac_translation.api.omission_report', args: { project: S.project, english_file: v.english, min_run: v.min_run || 6 } }).then(() => frappe.show_alert({ message: 'Auditing in the background — the report will be attached to the project when done.', indicator: 'blue' })); },
+    });
+    d.show();
+  };
+  $id('tpComplete').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    const d = new frappe.ui.Dialog({
+      title: 'Complete book — fill missing passages',
+      fields: [{ fieldname: 'english', fieldtype: 'Attach', label: 'English source (PDF or .docx)', reqd: 1 },
+      { fieldname: 'min_run', fieldtype: 'Int', label: 'Minimum passage length (sentences)', default: 6 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Translates every verified-missing passage and inserts it in place as a reviewable <b>Suggested</b> segment. Re-running rebuilds cleanly (no duplicates). Lower minimum = more thorough but slower/costlier. Runs in the background; refresh when it finishes.</div>' }],
+      primary_action_label: 'Fill missing',
+      primary_action(v) { d.hide(); frappe.call({ method: 'lac_translation.api.apply_omissions', args: { project: S.project, english_file: v.english, min_run: v.min_run || 6 } }).then(() => frappe.show_alert({ message: 'Filling missing passages in the background — refresh in a few minutes.', indicator: 'blue' })); },
+    });
+    d.show();
+  };
+  $id('tpRevert').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    frappe.confirm('Remove all AI-filled (Suggested) passages from this book? Your original translation is not touched.', () => {
+      frappe.call({ method: 'lac_translation.api.revert_omissions', args: { project: S.project } })
+        .then(r => { frappe.show_alert({ message: 'Removed ' + ((r.message || {}).deleted || 0) + ' AI passage(s)', indicator: 'orange' }); loadSegs(); });
+    });
   };
   $id('tpImportReviewed').onclick = () => {
     const d = new frappe.ui.Dialog({
