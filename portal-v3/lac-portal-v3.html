@@ -350,7 +350,7 @@ var S={ tab:'home', route:null, sheet:null, sheetData:null, loading:true, custom
   orders:undefined, subs:undefined, addresses:undefined, addressForm:null,
   referral:null, tracking:null, trackingInv:'',
   wishlist:undefined, wishlistCodes:{}, reviews:null, reviewItem:null, reviewDraft:{rating:5},
-  pDetail:{}, pQty:1, dt:null, rewards:null, rewardConfirm:null, article:null, articleReady:false, articleClaimed:{}, notifs:undefined, crossSell:[], couponSuggestions:[], chatPay:null,
+  pDetail:{}, pQty:1, dt:null, rewards:null, rewardConfirm:null, article:null, articleReady:false, articleClaimed:{}, notifs:undefined, crossSell:[], couponSuggestions:[], chatPay:null, onSale:undefined, collections:undefined, collection:null, leaders:undefined, health:null, qaAs:'', birthdayClaimed:false,
   checkedInToday:false, phoneChange:null, missionsRaw:[], currentMission:null, missionProof:'',
   payPollId:null, payTries:0 };
 
@@ -418,7 +418,7 @@ var QUIZ_STEPS=[
 ];
 
 /* ---------------- loaders (real endpoint -> mock fallback) ---------------- */
-function custName(){return (S.customer&&S.customer.name)||'';}
+function custName(){return S.qaAs||(S.customer&&S.customer.name)||'';}
 function loadMe(){
   if(STANDALONE){S.customer=MOCK.customer;return Promise.resolve();}
   return apiGet('portal_get_my_customer').then(function(d){
@@ -526,6 +526,41 @@ function loadRewards(){
     S.rewards=(d&&d.message)||null;
   }).catch(function(){S.rewards=null;});
 }
+function loadOnSale(){
+  if(STANDALONE){S.onSale=[];return;}
+  apiGet('portal_get_on_sale_items').then(function(d){
+    var arr=(d&&d.message)||[];S.onSale=Array.isArray(arr)?arr:[];
+    if(S.tab==='shop'&&!S.route)render();
+  }).catch(function(){S.onSale=[];});
+}
+function loadCollections(){
+  if(STANDALONE){S.collections=[];return;}
+  apiGet('cp_collections').then(function(d){
+    var m=(d&&d.message)||{};S.collections=m.collections||[];
+    if(S.tab==='home'&&!S.route)render();
+  }).catch(function(){S.collections=[];});
+}
+function loadCollectionDetail(id){
+  S.collection=null;
+  apiGet('portal_get_collection_detail',{collection:id}).then(function(d){
+    var m=(d&&d.message)||{};S.collection=m;renderSheet();
+  }).catch(function(){S.collection={items:[],collection:null};renderSheet();});
+}
+function loadLeaderboard(){
+  if(STANDALONE){S.leaders=[];return;}
+  S.leaders=null;
+  apiGet('portal_get_leaderboard',{limit:10}).then(function(d){
+    var m=(d&&d.message)||{};S.leaders=m.leaders||[];
+    if(S.tab==='club'&&!S.route)render();
+  }).catch(function(){S.leaders=[];});
+}
+function loadHealthSummary(){
+  if(STANDALONE){S.health=null;return;}
+  apiGet('portal_get_health_summary').then(function(d){
+    var m=(d&&d.message)||{};S.health=(m.ok&&m.days_logged>0)?m:null;
+    if(S.tab==='club'&&!S.route)render();
+  }).catch(function(){S.health=null;});
+}
 function loadProductDetail(id){
   if(STANDALONE)return;
   if(S.pDetail[id]!==undefined)return;
@@ -540,7 +575,7 @@ function boot(){
   S.loading=true; render();
   Promise.all([loadMe(),loadProducts()]).then(function(){S.cart=S.cart.filter(function(c){return !!prod(c.id);});saveCart();S.loading=false;render();
     loadClub(); loadArticles();
-    if(!STANDALONE){ loadDailyTasks().then(render); loadRewards(); loadWishlist(); loadSubs(); loadNotifs(); }
+    if(!STANDALONE){ loadDailyTasks().then(render); loadRewards(); loadWishlist(); loadSubs(); loadNotifs(); loadOnSale(); loadCollections(); }
   }).catch(function(){S.loading=false;render();});
 }
 
@@ -585,6 +620,7 @@ function syncHash(){
   plog('screen_view',{page:name});
   if(name==='shop'&&!STANDALONE){ plog('shop_view',{customer:custName()}); setTimeout(function(){loadDailyTasks().then(function(){ if(S.tab==='home')render(); });},900); }
   if(S.tab==='club'&&!S.club)loadClub().then(render);
+  if(S.tab==='club'&&S.leaders===undefined&&!STANDALONE){loadLeaderboard();loadHealthSummary();}
   if(S.tab==='knowledge'&&!S.articles)loadArticles().then(render);
   if(S.route){
     if(S.route.name==='orders'&&S.orders===undefined)loadOrders().then(render);
@@ -692,6 +728,7 @@ function homeHTML(){
         '<div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-top:3px;">өдөр streak</div></div>'+
         '<button class="btn" id="checkin-btn" '+(ck?'disabled style="opacity:.6;"':'')+' onclick="LAC.checkin()">'+icon('fire','width="18" height="18" stroke="#fff"')+(ck?' Чекин хийсэн ✓':' Checkin +50')+'</button></div>'+
     '</div></section>'+
+    birthdayHTML()+
     '<div class="qa">'+
       qa('bag','Захиалах','shop')+qa('repeat','Миний захиалга','order')+qa('shield','Эрүүл мэндийн үнэлгээ','assess')+qa('users','AI зөвлөгч','advisor')+
     '</div>'+
@@ -703,6 +740,7 @@ function homeHTML(){
       '<div style="font-size:13px;color:var(--muted);line-height:1.45;">'+esc(p.tagline||(p.desc&&p.desc[0])||'')+'</div>'+
       '<div style="display:flex;align-items:center;gap:14px;margin-top:12px;"><div style="font-weight:800;font-size:19px;">'+fmt(p.price)+'</div>'+
       '<button class="btn" onclick="LAC.add(\''+esc(p.id||p.item_code||'')+'\')">'+icon('plus','width="18" height="18" stroke="#fff"')+' Сагслах</button></div></div></div>'+
+    collectionsRailHTML()+
     '<div class="teasers"><button class="teaser club" onclick="LAC.go(\'club\')">'+
       '<div style="display:flex;align-items:center;gap:10px;"><span style="color:var(--gold-d);display:flex;">'+icon('award','width="22" height="22"')+'</span><div style="font-family:var(--serif);font-size:17px;font-weight:600;">Идэвхтэй даалгаврууд</div></div>'+
       '<div style="font-size:13px;color:var(--muted);margin:8px 0 14px;">Даалгавраа дуусгаж LAC$ ав</div>'+
@@ -710,6 +748,28 @@ function homeHTML(){
       '<button class="teaser know" onclick="LAC.go(\'knowledge\')"><div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.85;">Мэдлэг · LAC$ цуглуул</div>'+
       '<div style="font-family:var(--serif);font-size:19px;font-weight:600;margin-top:5px;line-height:1.2;">'+esc((S.articles&&S.articles.featured&&S.articles.featured.title)||'Эрүүл мэндийн нийтлэлүүд')+'</div>'+
       '<div style="font-size:12.5px;opacity:.85;margin-top:6px;">Уншаад оноо ав</div></button></div>';
+}
+function collectionsRailHTML(){
+  var cs=S.collections;if(!cs||!cs.length)return '';
+  return '<div class="sec-h"><div><div class="eyebrow">Цуглуулга</div><div class="t">Танд зориулсан багцууд</div></div></div>'+
+    '<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;">'+cs.map(function(c){
+      return '<div style="min-width:210px;max-width:210px;flex-shrink:0;border-radius:18px;overflow:hidden;position:relative;cursor:pointer;background:linear-gradient(155deg,#0C1B33,#152f56);color:#fff;" onclick="LAC.collection(\''+esc(c.id||c.name||'')+'\')">'+
+        (c.cover_image?'<img src="'+esc(c.cover_image)+'" onerror="this.remove()" style="width:100%;height:90px;object-fit:cover;opacity:.75;" alt="">':'<div style="height:34px;"></div>')+
+        '<div style="padding:12px 14px 14px;"><div style="font-family:var(--serif);font-size:16px;font-weight:600;line-height:1.2;">'+esc(c.title||'')+'</div>'+
+        (c.subtitle?'<div style="font-size:12px;opacity:.8;margin-top:3px;">'+esc(c.subtitle)+'</div>':'')+'</div></div>';
+    }).join('')+'</div>';
+}
+function isBirthdayToday(){
+  var b=S.customer&&S.customer.custom_birthday;if(!b)return false;
+  var d=new Date();var mm=('0'+(d.getMonth()+1)).slice(-2);var dd=('0'+d.getDate()).slice(-2);
+  return String(b).slice(5,10)===(mm+'-'+dd);
+}
+function birthdayHTML(){
+  if(STANDALONE||!isBirthdayToday()||S.birthdayClaimed)return '';
+  return '<div class="card" style="margin-top:14px;padding:16px;display:flex;align-items:center;gap:14px;background:linear-gradient(155deg,#C79A3A,#e6c877);border:none;">'+
+    '<div style="font-size:34px;">🎂</div><div style="flex:1;"><div style="font-family:var(--serif);font-size:17px;font-weight:700;color:#3d2f0a;">Төрсөн өдрийн мэнд!</div>'+
+    '<div style="font-size:12.5px;color:#5a4413;">Танд зориулсан LAC$ бэлэг бэлэн байна</div></div>'+
+    '<button class="btn" style="background:#0C1B33;box-shadow:none;" onclick="LAC.birthday()">Бэлэг авах</button></div>';
 }
 function teaserMissions(){
   var ms=(S.club&&S.club.missions)||MOCK.club.missions;
@@ -721,11 +781,25 @@ function qa(ic,label,act){return '<button class="q" onclick="LAC.quick(\''+act+'
 function miniMission(title,tag,pct){return '<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span>'+esc(title)+'</span><b style="color:var(--gold-d);">'+esc(tag)+'</b></div>'+
   '<div style="height:6px;border-radius:20px;background:#EEF2F8;overflow:hidden;"><div style="height:100%;width:'+pct+'%;border-radius:20px;background:linear-gradient(90deg,#D71E2B,#F0787F);"></div></div></div>';}
 
+function saleRailHTML(){
+  var os=S.onSale;if(!os||!os.length||S.cat!=='Бүгд'||S.q)return '';
+  return '<div class="sec-h" style="margin-top:4px;"><div><div class="eyebrow" style="color:var(--crimson);">Хямдрал</div><div class="t">Онцгой үнээр</div></div></div>'+
+    '<div style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;margin-bottom:14px;">'+os.map(function(p){
+      var pct=Math.round(p.discount_pct||0);
+      return '<div class="card" style="min-width:150px;max-width:150px;flex-shrink:0;padding:10px;cursor:pointer;position:relative;" onclick="LAC.product(\''+esc(p.item_code)+'\')">'+
+        (pct?'<span style="position:absolute;top:8px;left:8px;background:var(--crimson);color:#fff;font-size:11px;font-weight:800;border-radius:8px;padding:2px 7px;z-index:1;">-'+pct+'%</span>':'')+
+        '<img src="'+esc(p.image||'')+'" onerror="LAC.imgf(this)" style="width:100%;height:96px;object-fit:contain;background:var(--cream);border-radius:12px;" alt="">'+
+        '<div style="font-size:12.5px;font-weight:600;margin-top:8px;line-height:1.3;">'+esc(p.item_name||p.item_code)+'</div>'+
+        '<div style="margin-top:5px;"><span style="font-size:11.5px;color:var(--muted2);text-decoration:line-through;">'+fmt(p.price)+'</span> <b style="font-size:13.5px;color:var(--crimson);">'+fmt(p.discounted_price||p.price)+'</b></div>'+
+        '<button class="chip on" style="width:100%;justify-content:center;margin-top:8px;" onclick="event.stopPropagation();LAC.add(\''+esc(p.item_code)+'\')">Сагслах</button></div>';
+    }).join('')+'</div>';
+}
 function shopHTML(){
   var ql=S.q.trim().toLowerCase();
   var list=S.products.filter(function(p){return (S.cat==='Бүгд'||p.cat===S.cat)&&(!ql||(p.name||'').toLowerCase().indexOf(ql)>=0);});
   var h='<div class="searchbar mobile-search" style="margin-bottom:14px;">'+icon('search')+'<input placeholder="Бүтээгдэхүүн хайх" value="'+esc(S.q)+'" oninput="LAC.search(this.value)"></div>';
   h+='<div class="chips">'+S.categories.map(function(c){return '<button class="chip '+(S.cat===c?'on':'')+'" onclick="LAC.cat(\''+esc(c)+'\')">'+esc(c)+'</button>';}).join('')+'</div>';
+  h+=saleRailHTML();
   if(!list.length){return h+'<div class="empty"><div class="et">"'+esc(S.q)+'" олдсонгүй</div><div style="font-size:13px;margin-top:6px;">Өөр түлхүүр үг эсвэл ангилал сонгоно уу</div></div>';}
   h+='<div class="prods">'+list.map(prodCard).join('')+'</div>';
   if(cartCount()>0){h+='<div style="position:sticky;bottom:14px;margin-top:18px;z-index:5;"><button class="btn full" style="box-shadow:0 12px 30px rgba(215,30,43,.4);" onclick="LAC.openCart()">'+icon('cart','width="18" height="18" stroke="#fff"')+' Сагс · '+cartCount()+' ширхэг · '+fmt(cartSum())+' — Харах</button></div>';}
@@ -746,6 +820,23 @@ function rewardsCardHTML(){
   return '<div class="sec-h"><div class="t">Шагналын сан</div></div>'+
     '<div class="card" style="overflow:hidden;"><div style="padding:14px 16px 4px;font-size:12.5px;color:var(--muted);">LAC$-ээ шагнал болгон солиорой · Үлдэгдэл: <b style="color:var(--teal-t);">'+Number(bal).toLocaleString('en-US')+' LAC$</b></div>'+rows+'</div>';
 }
+function leaderboardHTML(){
+  var ls=S.leaders;if(!ls||!ls.length)return '';
+  return '<div class="sec-h"><div class="t">Тэргүүлэгчид</div></div>'+
+    '<div class="card" style="overflow:hidden;">'+ls.map(function(l,i){
+      var medal=i===0?'🥇':(i===1?'🥈':(i===2?'🥉':(i+1)+'.'));
+      return '<div style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line);">'+
+        '<div style="width:28px;text-align:center;font-weight:800;">'+medal+'</div>'+
+        '<div style="flex:1;font-size:13.5px;font-weight:600;">'+esc(l.display_name||'Гишүүн')+'</div>'+
+        '<b style="color:var(--teal-t);font-size:13px;">'+Number(l.lac_balance||0).toLocaleString('en-US')+' LAC$</b></div>';
+    }).join('')+'</div>';
+}
+function healthSummaryHTML(){
+  var h=S.health;if(!h)return '';
+  var sleepH=Math.round((h.today_sleep_minutes||0)/6)/10;
+  return '<div class="sec-h"><div class="t">Эрүүл мэндийн тойм</div></div>'+
+    '<div class="pstats">'+pstat(Number(h.today_steps||0).toLocaleString('en-US'),'Өнөөдрийн алхалт')+pstat(String(sleepH)+' ц','Өнөөдрийн нойр')+pstat(Number(h.steps_7d_total||0).toLocaleString('en-US'),'7 хоногийн алхалт')+'</div>';
+}
 function clubHTML(){
   if(!S.club)return skeletonHTML();var cl=S.club;var t=tierInfo();
   return '<div style="text-align:center;padding:8px 0 4px;"><div class="medallion">'+icon('award','width="46" height="46" stroke="#5a4413" stroke-width="1.5"')+'</div>'+
@@ -761,6 +852,8 @@ function clubHTML(){
     '<div class="sec-h"><div class="t">Тэмдэгүүд</div></div>'+
     '<div class="badges">'+cl.badges.map(function(b){return '<div class="badge" style="'+(b.e?'':'opacity:.55;')+'background:'+(b.e?'rgba(199,154,58,.06)':'#fff')+';">'+icon(b.icon,'width="26" height="26" stroke="'+(b.e?'#B8862F':'#C6D0DC')+'"')+'<div class="bn">'+esc(b.name)+'</div></div>';}).join('')+'</div>'+
     rewardsCardHTML()+
+    leaderboardHTML()+
+    healthSummaryHTML()+
     '<div class="card" style="margin-top:16px;padding:16px;"><div style="font-family:var(--serif);font-size:18px;font-weight:600;margin-bottom:4px;">LAC$ гэж юу вэ?</div>'+
     '<div style="font-size:13px;color:var(--muted);line-height:1.6;">LAC$ бол таны цуглуулж, зарцуулдаг урамшууллын оноо. <b>1 LAC$ = ₮1</b>. Өдрийн чекин, даалгавар, нийтлэл унших, худалдан авалтаас цуглуулж — төлбөрөө хөнгөлөх эсвэл шагнал авахад ашиглана.</div></div>';
 }
@@ -1565,6 +1658,21 @@ function renderSheet(){
   else if(S.sheet==='report'){title='Асуудал мэдээлэх';body=reportSheetBody();}
   else if(S.sheet==='reviews'){title='Үнэлгээ, сэтгэгдэл';body=reviewsSheetBody();}
   else if(S.sheet==='article'){title='Нийтлэл';body=articleSheetBody();}
+  else if(S.sheet==='collection'){
+    var cdt=S.collection;
+    title=(cdt&&cdt.collection&&cdt.collection.title)||'Цуглуулга';
+    if(cdt===null){body=loadingBlock();}
+    else{
+      var its=(cdt&&cdt.items)||[];
+      body=((cdt&&cdt.collection&&cdt.collection.subtitle)?'<div style="font-size:13px;color:var(--muted);margin-bottom:12px;">'+esc(cdt.collection.subtitle)+'</div>':'')+
+        (its.length?its.map(function(p){
+          return '<div style="display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);">'+
+            '<img src="'+esc(p.image||'')+'" onerror="LAC.imgf(this)" style="width:52px;height:52px;object-fit:contain;background:var(--cream);border-radius:12px;cursor:pointer;" alt="" onclick="LAC.closeSheet();LAC.product(\''+esc(p.item_code)+'\')">'+
+            '<div style="flex:1;min-width:0;cursor:pointer;" onclick="LAC.closeSheet();LAC.product(\''+esc(p.item_code)+'\')"><div style="font-weight:600;font-size:13.5px;">'+esc(p.item_name||p.item_code)+'</div><div style="font-size:12.5px;color:var(--muted);">'+fmt(p.price)+'</div></div>'+
+            '<button class="chip" onclick="LAC.add(\''+esc(p.item_code)+'\')">Сагслах</button></div>';
+        }).join(''):'<div class="empty"><div class="et">Хоосон цуглуулга</div></div>');
+    }
+  }
   else if(S.sheet==='habit'){title='Эрүүл зуршил';body=habitSheetBody();}
   else if(S.sheet==='mission'){title='Даалгавар';body=missionSheetBody();}
   root.innerHTML='<div class="ov ov2" onclick="LAC.closeSheet()"><div class="sheet2" onclick="event.stopPropagation()">'+
@@ -1677,6 +1785,8 @@ window.LAC={
   saveInfo:saveInfo, pref:togglePref,
   reportSend:submitReport,
   pay:payInvoice,
+  collection:function(id){ openSheet('collection',id); loadCollectionDetail(id); },
+  birthday:function(){ apiPost('portal_birthday_bonus',{customer:custName()}).then(function(m){ if(m.ok){S.birthdayClaimed=true;if(S.customer&&m.balance!=null)S.customer.custom_loyalty_points=m.balance;toast('🎂 +'+(m.earned||0)+' LAC$ бэлэг орлоо!');render();} else {toast(m.reason==='not birthday today'?'Өнөөдөр таны төрсөн өдөр биш байна':'Бэлэг авах боломжгүй');} }).catch(function(){toast('Сүлжээний алдаа');}); },
   payFromChat:function(){ var p=S.chatPay; if(!p||!p.payment_url)return; S.checkout.pay={invoice:p.invoice,payment_url:p.payment_url,qr_image:p.qr_image||''}; S.checkout.done=null; goRoute('checkout'); startPayPoll(p.invoice); },
   claimRead:function(id){ if(S.articleClaimed[id]){toast('Энэ нийтлэлийн оноо бүртгэгдсэн');return;} plog('article_read',{customer:custName(),article:id}); S.articleClaimed[id]=1; toast('+20 LAC$ бүртгэгдлээ · өдөрт 1 нийтлэл'); renderSheet(); setTimeout(function(){loadDailyTasks().then(render);},1200); },
   setCoupon:function(c){ S.checkout.coupon=c; render(); },
@@ -1685,6 +1795,15 @@ window.LAC={
 };
 
 /* ---------------- init ---------------- */
+try{
+  var qp=new URLSearchParams(location.search);
+  if(qp.get('qa_as'))S.qaAs=qp.get('qa_as');
+  window.LACQA={as:function(c){S.qaAs=c||'';toast('QA persona: '+(S.qaAs||'off'));boot();},
+    reset:function(scope){apiPost('portal_qa_reset',{customer:custName(),scope:scope||'all'}).then(function(m){toast(m&&m.ok?'QA reset OK':'QA reset failed');setTimeout(function(){location.reload();},600);});}};
+}catch(e){}
+window.addEventListener('keydown',function(e){ if(e.key==='Escape'){ if(S.cartOpen)closeCart(); else if(S.sheet)closeSheet(); } });
+window.addEventListener('offline',function(){ if($('offline-bar'))return; var b=document.createElement('div'); b.id='offline-bar'; b.textContent='Интернэт холболт тасарсан — дахин холбогдохыг хүлээж байна'; b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99;background:#C0392B;color:#fff;text-align:center;font-size:12.5px;font-weight:700;padding:6px;'; document.body.appendChild(b); });
+window.addEventListener('online',function(){ var b=$('offline-bar'); if(b)b.remove(); toast('Холболт сэргэлээ'); });
 if(!location.hash)location.hash='#/home';
 syncHash();      // set S.tab from URL
 boot();          // load data, then render
