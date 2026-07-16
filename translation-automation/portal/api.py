@@ -1525,6 +1525,7 @@ def _omission_report_job(project, english_file, min_run=6, model="gpt-4o"):
     from frappe.utils.file_manager import save_file
     fname = "omission_audit_%s.html" % project
     f = save_file(fname, html.encode("utf-8"), "Translation Project", project, is_private=1)
+    frappe.db.commit()   # so the File record persists for direct-console runs too
 
     cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
     summary = {"candidate_gaps": len(gaps), "confirmed_missing": len(confirmed),
