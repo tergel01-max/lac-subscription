@@ -1616,3 +1616,157 @@ def revert_omissions(project):
         frappe.delete_doc("Translation Segment", n, ignore_permissions=True, force=True)
     frappe.db.commit()
     return {"deleted": len(names)}
+
+
+# --------------------------------------------------------------------------
+# PDF-faithful full build (Option B): translate EVERY English sentence of the
+# source-of-truth PDF, in PDF order, into a NEW project. Uses the existing
+# translation (aligned + filled) as a per-passage reference for terminology and
+# style. Guarantees: complete, in PDF order, no overlaps. Mostly AI by nature
+# (the human translation covered only part of the book).
+# --------------------------------------------------------------------------
+
+def _translate_en(model, headers, glossary, items, reference=""):
+    """items: [{id, en}] -> ({id: mn}, usage). Faithful EN->MN, one per id."""
+    lines = ["[%d] %s" % (it["id"], it["en"]) for it in items]
+    instr = ("Translate EACH numbered English sentence into natural, publication-ready "
+             "Mongolian. The English is the SOURCE OF TRUTH: translate it faithfully and "
+             "completely — do not add, omit, merge or split. Return a JSON object "
+             '{"items":[{"id":<int>,"mn":"<Mongolian>"}]} with EXACTLY one entry per input '
+             "id, using the same ids.")
+    if glossary:
+        instr += "\n\nGlossary / approved terminology (use exactly, adapt case endings):\n" + glossary
+    if reference:
+        instr += ("\n\nExisting Mongolian translation of this same passage — reuse its wording "
+                  "and terminology where it fits, for consistency:\n" + reference)
+    payload = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": "You are an expert English-to-Mongolian book translator. Output only valid JSON."},
+                            {"role": "user", "content": instr + "\n\nSentences:\n" + "\n".join(lines)}]}
+    resp = make_post_request("https://api.openai.com/v1/chat/completions",
+                             headers=headers, data=json.dumps(payload))
+    data = json.loads(resp["choices"][0]["message"]["content"])
+    out = {}
+    for x in data.get("items", []):
+        try:
+            out[int(x["id"])] = x.get("mn", "")
+        except Exception:
+            pass
+    return out, resp.get("usage", {})
+
+
+@frappe.whitelist()
+def build_faithful(source_project, english_file, model="gpt-4o", chunk=12, title=None):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._build_faithful_job", queue="long", timeout=36000,
+                   source_project=source_project, english_file=english_file, model=model,
+                   chunk=int(chunk), title=title)
+    return {"queued": True}
+
+
+def _build_faithful_job(source_project, english_file, model="gpt-4o", chunk=12, title=None):
+    headers = _headers()
+    chunk = int(chunk)
+    src = frappe.get_doc("Translation Project", source_project)
+    glossary = _eff_glossary(src)
+    en = _clean_en_sentences(english_file)
+    en = [e for e in en
+          if "....." not in e["text"] and not _EN_NUM_ROW.match(e["text"].strip())]
+    SKIP_CH = {"TABLE OF CONTENTS:", "Index", "LITERATURE"}
+    en = [e for e in en if e["chapter"] not in SKIP_CH]
+    en_texts = [e["text"] for e in en]
+    N = len(en_texts)
+    if not N:
+        return {"error": "no english"}
+
+    # reference map: en_index -> existing Mongolian (aligned human + earlier AI fills)
+    pref = {}
+    for i, t in enumerate(en_texts):
+        pref.setdefault(t[:40], i)
+    ref = {}
+    for s in frappe.get_all("Translation Segment", filters={"project": source_project},
+                            fields=["source_text", "draft_text", "final_text"],
+                            limit_page_length=0):
+        mn = (s.get("final_text") or s.get("draft_text") or "").strip()
+        if not mn:
+            continue
+        for sent in _split_sentences(s.get("source_text") or ""):
+            j = pref.get(sent.strip()[:40])
+            if j is not None:
+                ref.setdefault(j, mn)
+
+    if not title:
+        title = (src.title or source_project) + " — Full (PDF-faithful)"
+    proj = frappe.get_doc({"doctype": "Translation Project", "title": title,
+                           "status": "In Progress", "source_language": "English",
+                           "target_language": "Mongolian", "model": model,
+                           "glossary": src.glossary or ""}).insert(ignore_permissions=True)
+
+    seq = 0
+    in_tok = out_tok = 0
+    chap_mn = {}
+    i = 0
+    while i < N:
+        block = list(range(i, min(i + chunk, N)))
+        ch_en = en[block[0]]["chapter"]
+        if ch_en and ch_en not in chap_mn:
+            try:
+                tt, u = _translate_en(model, headers, glossary, [{"id": 0, "en": ch_en}])
+                in_tok += u.get("prompt_tokens", 0); out_tok += u.get("completion_tokens", 0)
+                chap_mn[ch_en] = (tt.get(0) or ch_en).upper()[:130]
+            except Exception:
+                chap_mn[ch_en] = ch_en[:130]
+        items = [{"id": k, "en": en_texts[k]} for k in block]
+        reftxt = "\n".join(ref[k] for k in block if k in ref)
+        try:
+            tr, u = _translate_en(model, headers, glossary, items, reftxt)
+        except Exception:
+            tr, u = {}, {}
+        in_tok += u.get("prompt_tokens", 0); out_tok += u.get("completion_tokens", 0)
+        for k in block:
+            mn = tr.get(k) or ref.get(k) or ""
+            seq += 1
+            frappe.get_doc({"doctype": "Translation Segment", "project": proj.name, "seq": seq,
+                            "chapter": chap_mn.get(en[k]["chapter"], en[k]["chapter"]),
+                            "status": "Pending", "source_text": en_texts[k],
+                            "draft_text": mn, "final_text": mn, "model": model}).insert(ignore_permissions=True)
+        frappe.db.commit()
+        frappe.publish_realtime("lac_translation_progress",
+                                {"project": proj.name, "done": seq, "total": N})
+        i += chunk
+    proj.db_set("total_segments", seq)
+    frappe.db.commit()
+    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
+    summary = {"project": proj.name, "segments": seq, "english_sentences": N,
+               "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
+@frappe.whitelist()
+def export_docx_grouped(project):
+    """Export a project as .docx, adding a heading whenever the chapter field
+    changes (used by the PDF-faithful build, whose chapter field holds the
+    translated chapter title)."""
+    frappe.only_for("System Manager")
+    proj = frappe.get_doc("Translation Project", project)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["seq", "chapter", "final_text", "draft_text"],
+                          order_by="seq asc, creation asc", limit_page_length=0)
+    from docx import Document
+    doc = Document()
+    doc.add_heading(proj.title or project, 0)
+    cur = None
+    for s in segs:
+        ch = (s.get("chapter") or "").strip()
+        if ch and ch != cur:
+            doc.add_heading(ch, level=1)
+            cur = ch
+        t = (s.get("final_text") or s.get("draft_text") or "").strip()
+        if t:
+            doc.add_paragraph(t)
+    buf = io.BytesIO(); doc.save(buf)
+    from frappe.utils.file_manager import save_file
+    fname = re.sub(r"[^\w\-]+", "_", (proj.title or project)) + "_MN.docx"
+    f = save_file(fname, buf.getvalue(), "Translation Project", project, is_private=1)
+    frappe.db.commit()
+    return {"file_url": f.file_url}
