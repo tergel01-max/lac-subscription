@@ -1201,7 +1201,7 @@ function missionSheetBody(){
   var m=S.currentMission;
   if(!m)return '<div class="empty"><div class="et">Даалгавар олдсонгүй</div></div>';
   var proof=S.missionProof||'';
-  var pf=m.requiresProof?('<input id="missionFile" type="file" accept="image/*" capture="environment" style="display:none;" onchange="LAC.missionFile(this)">'+
+  var pf=m.requiresProof?('<input id="missionFile" type="file" accept="image/*" capture="environment" style="display:none;" onchange="LAC.missionPhoto(this)">'+
     '<button class="btn full" style="background:var(--cream);color:var(--ink);box-shadow:none;" onclick="document.getElementById(\'missionFile\').click()">📷 Зураг авах / хавсаргах</button>'+
     (proof?'<img src="'+esc(proof)+'" style="width:100%;border-radius:12px;margin-top:10px;" alt="">':'')):'';
   return '<div style="text-align:center;padding:4px 0;">'+
@@ -1589,7 +1589,7 @@ window.LAC={
   habit:function(id){ openSheet('habit',id); },
   habitShot:startHabitCapture,
   mission:function(idx){ S.currentMission=(S.missionsRaw||[])[idx]; S.missionProof=''; if(S.currentMission)openSheet('mission'); },
-  missionFile:function(input){
+  missionPhoto:function(input){
     if(!input||!input.files||!input.files[0])return;
     toast('Зураг ачааллаж байна…');
     uploadPhoto(input.files[0],false,function(url){ S.missionProof=url; if(!url)toast('Зураг ачаалахад алдаа гарлаа'); renderSheet(); });
