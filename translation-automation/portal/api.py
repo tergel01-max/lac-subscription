@@ -384,12 +384,17 @@ def export_docx(project):
     from docx import Document
     doc = Document()
     doc.add_heading(proj.title or project, 0)
-    cur = None
+    # Pure Mongolian manuscript: the book already contains its own Mongolian
+    # chapter titles as segments, so style those as headings and emit the rest
+    # as body. No English/"Book" scaffolding.
     for s in segs:
-        ch = s.get("chapter") or "Book"
-        if ch != cur:
-            doc.add_heading(ch, level=1); cur = ch
-        doc.add_paragraph(s.get("final_text") or s.get("ai_suggestion") or s.get("draft_text") or "")
+        text = (s.get("final_text") or s.get("ai_suggestion") or s.get("draft_text") or "").strip()
+        if not text:
+            continue
+        if _is_headingish(text):
+            doc.add_heading(text, level=1)
+        else:
+            doc.add_paragraph(text)
     buf = io.BytesIO(); doc.save(buf)
     from frappe.utils.file_manager import save_file
     fname = re.sub(r"[^\w\-]+", "_", (proj.title or project)) + "_MN.docx"
