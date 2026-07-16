@@ -1561,6 +1561,15 @@ def _apply_omissions_job(project, english_file, min_run=4, model="gpt-4o"):
     min_run = int(min_run)
     proj = frappe.get_doc("Translation Project", project)
     glossary = _eff_glossary(proj)
+    # Idempotent: clear any previous AI-inserted passages first so re-running
+    # (e.g. at a different min_run) rebuilds cleanly from the original
+    # translation instead of duplicating earlier fills.
+    old = frappe.get_all("Translation Segment",
+                         filters={"project": project, "model": "AI-omission"}, pluck="name")
+    for n in old:
+        frappe.delete_doc("Translation Segment", n, ignore_permissions=True, force=True)
+    if old:
+        frappe.db.commit()
     gaps = _omission_runs(english_file, project, min_run)
 
     in_tok = out_tok = 0
