@@ -1259,3 +1259,97 @@ def _align_gapfill_job(project, english_file, model="gpt-4o", batch=12,
                "prompt_tokens": tot_in, "completion_tokens": tot_out, "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
+
+
+# --------------------------------------------------------------------------
+# Targeted range aligner: for an anchor-starved zone, give the whole English
+# chapter-band as the window so the model can find each match by meaning even
+# with no interior anchors. The band is auto-derived from the aligned segments
+# bracketing the range (or passed explicitly). A monotonic cursor keeps it
+# ordered and trims tokens as it advances. Only fills blanks.
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def align_range(project, english_file, from_seq, to_seq, en_from=None, en_to=None,
+                model="gpt-4o", batch=10):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._align_range_job", queue="long", timeout=9000,
+                   project=project, english_file=english_file, from_seq=int(from_seq),
+                   to_seq=int(to_seq), en_from=en_from, en_to=en_to, model=model, batch=int(batch))
+    return {"queued": True}
+
+
+def _align_range_job(project, english_file, from_seq, to_seq, en_from=None, en_to=None,
+                     model="gpt-4o", batch=10):
+    headers = _headers()
+    from_seq, to_seq, batch = int(from_seq), int(to_seq), int(batch)
+    en = _clean_en_sentences(english_file)
+    en = [e for e in en
+          if "....." not in e["text"] and not _EN_NUM_ROW.match(e["text"].strip())]
+    en_texts = [e["text"] for e in en]
+    N = len(en_texts)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "draft_text", "source_text"], order_by="seq asc")
+    if not N or not segs:
+        return {"error": "missing"}
+
+    pref = {}
+    for i, t in enumerate(en_texts):
+        pref.setdefault(t[:40], i)
+
+    # auto-derive the English band from the nearest aligned segments outside [from,to]
+    if en_from is None or en_to is None:
+        before = [pref.get((s["source_text"] or "")[:40]) for s in segs
+                  if s["seq"] < from_seq and (s.get("source_text") or "").strip()]
+        after = [pref.get((s["source_text"] or "")[:40]) for s in segs
+                 if s["seq"] > to_seq and (s.get("source_text") or "").strip()]
+        before = [x for x in before if x is not None]
+        after = [x for x in after if x is not None]
+        if en_from is None:
+            en_from = max(before) if before else 0
+        if en_to is None:
+            en_to = min(after) if after else N - 1
+    en_from = max(0, int(en_from) - 5)
+    en_to = min(N, int(en_to) + 6)
+
+    target = [s for s in segs if from_seq <= s["seq"] <= to_seq
+              and not (s.get("source_text") or "").strip()]
+    written = 0
+    in_tok = out_tok = 0
+    cursor = en_from
+    i = 0
+    while i < len(target):
+        chunk = target[i:i + batch]
+        lo = max(en_from, cursor - 8)
+        win_en = [(k, en_texts[k]) for k in range(lo, en_to)]
+        mn_lines = "\n".join("M%d: %s" % (n, (chunk[n]["draft_text"] or "")[:280])
+                             for n in range(len(chunk)))
+        try:
+            pairs, usage = _align_llm_pairs(model, headers, win_en, mn_lines)
+        except Exception:
+            pairs, usage = {}, {}
+        in_tok += usage.get("prompt_tokens", 0)
+        out_tok += usage.get("completion_tokens", 0)
+        used = []
+        for n in range(len(chunk)):
+            ens = [e for e in pairs.get(n, []) if lo <= e < en_to]
+            if ens:
+                ens = sorted(set(ens))
+                frappe.db.set_value("Translation Segment", chunk[n]["name"],
+                                    {"source_text": " ".join(en_texts[e] for e in ens),
+                                     "chapter": en[ens[0]]["chapter"]}, update_modified=False)
+                written += 1
+                used.extend(ens)
+        if used:
+            cursor = min(max(used) + 1, en_to - 1)
+        frappe.db.commit()
+        frappe.publish_realtime("lac_translation_progress",
+                                {"project": project, "done": written, "total": len(target)})
+        i += batch
+
+    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
+    summary = {"range": [from_seq, to_seq], "en_band": [en_from, en_to],
+               "target_blanks": len(target), "aligned": written,
+               "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
