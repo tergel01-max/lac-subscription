@@ -380,7 +380,7 @@ def export_docx(project):
     proj = frappe.get_doc("Translation Project", project)
     segs = frappe.get_all("Translation Segment", filters={"project": project},
                           fields=["seq", "chapter", "final_text", "ai_suggestion", "draft_text"],
-                          order_by="seq asc")
+                          order_by="seq asc, creation asc")
     from docx import Document
     doc = Document()
     doc.add_heading(proj.title or project, 0)
@@ -1533,3 +1533,71 @@ def _omission_report_job(project, english_file, min_run=6, model="gpt-4o"):
                "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
+
+
+# --------------------------------------------------------------------------
+# Complete the book: translate the verified-missing English passages and insert
+# them as reviewable Mongolian segments at their correct position. Marked with
+# model="AI-omission" and status="Suggested" so they're clearly AI-added,
+# reviewable in the portal, exportable, and fully reversible (revert_omissions).
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def apply_omissions(project, english_file, min_run=4, model="gpt-4o"):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._apply_omissions_job", queue="long", timeout=20000,
+                   project=project, english_file=english_file, min_run=int(min_run), model=model)
+    return {"queued": True}
+
+
+def _apply_omissions_job(project, english_file, min_run=4, model="gpt-4o"):
+    headers = _headers()
+    min_run = int(min_run)
+    proj = frappe.get_doc("Translation Project", project)
+    glossary = _eff_glossary(proj)
+    gaps = _omission_runs(english_file, project, min_run)
+
+    in_tok = out_tok = 0
+    inserted = 0
+    ins_sents = 0
+    for gi, g in enumerate(gaps):
+        try:
+            verdict, mn, usage = _omission_check(model, headers, glossary, g)
+        except Exception:
+            verdict, mn, usage = "missing", "", {}
+        in_tok += usage.get("prompt_tokens", 0)
+        out_tok += usage.get("completion_tokens", 0)
+        if verdict == "missing" and (mn or "").strip():
+            seq = g["after_seq"] if g["after_seq"] is not None else 0
+            frappe.get_doc({
+                "doctype": "Translation Segment", "project": project, "seq": seq,
+                "chapter": g["chapter"], "status": "Suggested", "model": "AI-omission",
+                "source_text": " ".join(g["en_sents"]),
+                "ai_suggestion": mn, "final_text": mn, "draft_text": "",
+            }).insert(ignore_permissions=True)
+            inserted += 1
+            ins_sents += len(g["en_sents"])
+        if gi % 20 == 0:
+            frappe.db.commit()
+        frappe.publish_realtime("lac_translation_progress",
+                                {"project": project, "done": gi + 1, "total": len(gaps)})
+    frappe.db.commit()
+
+    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
+    summary = {"candidate_gaps": len(gaps), "inserted_passages": inserted,
+               "english_sentences_added": ins_sents, "model": model,
+               "prompt_tokens": in_tok, "completion_tokens": out_tok, "est_cost_usd": cost}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
+@frappe.whitelist()
+def revert_omissions(project):
+    """Delete every AI-inserted omission segment (fully undo apply_omissions)."""
+    frappe.only_for("System Manager")
+    names = frappe.get_all("Translation Segment",
+                           filters={"project": project, "model": "AI-omission"}, pluck="name")
+    for n in names:
+        frappe.delete_doc("Translation Segment", n, ignore_permissions=True, force=True)
+    frappe.db.commit()
+    return {"deleted": len(names)}
