@@ -394,6 +394,7 @@ def export_docx(project):
     from frappe.utils.file_manager import save_file
     fname = re.sub(r"[^\w\-]+", "_", (proj.title or project)) + "_MN.docx"
     f = save_file(fname, buf.getvalue(), "Translation Project", project, is_private=1)
+    frappe.db.commit()   # persist the File record for direct-console runs
     return {"file_url": f.file_url}
 
 
