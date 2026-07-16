@@ -444,7 +444,7 @@ function loadClub(){
       missions: missions.length?missions.map(function(m,i){var t=m.target||1,p=m.progress||0,done=(m.state==='done')||!!m.completed;var pending=(m.state==='pending');
         return {idx:i,icon:done?'check':'fire',title:m.label||m.title||'',done:done,pending:pending,reward:'+'+(m.reward||0)+' LAC$',
           tag:done?'✓ Биелсэн':(pending?'Хянагдаж байна':(p+'/'+t)),pct:done?100:Math.min(100,Math.round(p/t*100))};}):MOCK.club.missions,
-      badges: badges.length?badges.map(function(b){return {icon:b.icon||'star',name:b.label||b.name||'',e:!!b.earned};}):MOCK.club.badges
+      badges: badges.length?badges.map(function(b){return {icon:({first_purchase:'bag',reviewer:'star',subscriber:'repeat',streak7:'fire',health_champ:'award'})[b.id]||'star',name:b.label||b.name||'',e:!!b.earned};}):MOCK.club.badges
     };
   });
 }
@@ -517,6 +517,7 @@ function loadDailyTasks(){
   if(STANDALONE){S.dt=null;return Promise.resolve();}
   return apiGet('portal_get_daily_tasks',{customer:custName()}).then(function(d){
     S.dt=(d&&d.message)||null;
+    ((S.dt&&S.dt.daily)||[]).forEach(function(t){if(t.id==='checkin'&&t.done)S.checkedInToday=true;});
   }).catch(function(){S.dt=null;});
 }
 function loadRewards(){
@@ -578,6 +579,7 @@ function syncHash(){
   render();
   var sc=document.querySelector('.scroll'); if(sc)sc.scrollTop=0; window.scrollTo(0,0);
   plog('screen_view',{page:name});
+  if(name==='shop'&&!STANDALONE){ plog('shop_view',{customer:custName()}); setTimeout(function(){loadDailyTasks().then(function(){ if(S.tab==='home')render(); });},900); }
   if(S.tab==='club'&&!S.club)loadClub().then(render);
   if(S.tab==='knowledge'&&!S.articles)loadArticles().then(render);
   if(S.route){
@@ -694,7 +696,7 @@ function homeHTML(){
     '<div class="card featured"><img src="'+esc(p.img||'')+'" onerror="LAC.imgf(this)" alt="'+esc(p.name||'')+'">'+
       '<div style="flex:1;min-width:0;"><div class="pc" style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--teal-t);font-weight:600;">'+esc(p.cat||'')+'</div>'+
       '<div style="font-family:var(--serif);font-size:20px;font-weight:600;margin:3px 0 4px;">'+esc(p.name||'')+'</div>'+
-      '<div style="font-size:13px;color:var(--muted);line-height:1.45;">'+esc(p.tagline||'')+'</div>'+
+      '<div style="font-size:13px;color:var(--muted);line-height:1.45;">'+esc(p.tagline||(p.desc&&p.desc[0])||'')+'</div>'+
       '<div style="display:flex;align-items:center;gap:14px;margin-top:12px;"><div style="font-weight:800;font-size:19px;">'+fmt(p.price)+'</div>'+
       '<button class="btn" onclick="LAC.add(\''+esc(p.id||p.item_code||'')+'\')">'+icon('plus','width="18" height="18" stroke="#fff"')+' Сагслах</button></div></div></div>'+
     '<div class="teasers"><button class="teaser club" onclick="LAC.go(\'club\')">'+
