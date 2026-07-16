@@ -1557,7 +1557,7 @@ window.LAC={
   openCart:openCart, closeCart:function(){closeCart();},
   openSheet:openSheet, closeSheet:function(){closeSheet();},
   add:function(id){addToCart(id,1);}, qty:setQty,
-  cat:function(c){S.cat=c;render();}, search:function(v){S.q=v; if(S.tab!=='shop'||S.route){go('shop');} else render();},
+  cat:function(c){S.cat=c;render();}, search:function(v){S.q=v; if(S.tab!=='shop'||S.route){go('shop');} else {render(); requestAnimationFrame(function(){var els=document.querySelectorAll('.searchbar input');for(var i=0;i<els.length;i++){var e=els[i];if(e.offsetParent){e.focus();try{e.setSelectionRange(e.value.length,e.value.length);}catch(err){}break;}}});}},
   checkin:doCheckin,
   quick:function(a){ if(a==='shop')go('shop'); else if(a==='order')goRoute('orders'); else if(a==='assess'){S.quiz={step:0,answers:{},results:null,loading:false};goRoute('assess');} else goRoute('advisor'); },
   menu:function(k){
