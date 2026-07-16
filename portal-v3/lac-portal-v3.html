@@ -345,12 +345,12 @@ var NAV=[
 var EYEBROW={home:'Тавтай морил',shop:'Бүтээгдэхүүн',club:'Түвшин & урамшуулал',knowledge:'Уншаад оноо цуглуул',profile:'Таны бүртгэл'};
 var S={ tab:'home', route:null, sheet:null, sheetData:null, loading:true, customer:null, products:[], categories:['Бүгд'],
   cat:'Бүгд', q:'', cart:[], club:null, articles:null, cartOpen:false, notifDot:true,
-  checkout:{method:'standard',redeem:false,pay:null,done:null}, chat:[], chatLoading:false,
+  checkout:{method:'standard',redeem:false,coupon:'',pay:null,done:null}, chat:[], chatLoading:false,
   quiz:{step:0,answers:{},results:null,loading:false},
   orders:undefined, subs:undefined, addresses:undefined, addressForm:null,
   referral:null, tracking:null, trackingInv:'',
   wishlist:undefined, wishlistCodes:{}, reviews:null, reviewItem:null, reviewDraft:{rating:5},
-  pDetail:{}, pQty:1, dt:null, rewards:null, rewardConfirm:null, article:null,
+  pDetail:{}, pQty:1, dt:null, rewards:null, rewardConfirm:null, article:null, articleReady:false, articleClaimed:{}, notifs:undefined, crossSell:[], couponSuggestions:[], chatPay:null,
   checkedInToday:false, phoneChange:null, missionsRaw:[], currentMission:null, missionProof:'',
   payPollId:null, payTries:0 };
 
@@ -536,10 +536,11 @@ function loadProductDetail(id){
 }
 
 function boot(){
+  restoreCart();
   S.loading=true; render();
-  Promise.all([loadMe(),loadProducts()]).then(function(){S.loading=false;render();
+  Promise.all([loadMe(),loadProducts()]).then(function(){S.cart=S.cart.filter(function(c){return !!prod(c.id);});saveCart();S.loading=false;render();
     loadClub(); loadArticles();
-    if(!STANDALONE){ loadDailyTasks().then(render); loadRewards(); loadWishlist(); loadSubs(); }
+    if(!STANDALONE){ loadDailyTasks().then(render); loadRewards(); loadWishlist(); loadSubs(); loadNotifs(); }
   }).catch(function(){S.loading=false;render();});
 }
 
@@ -547,8 +548,8 @@ function boot(){
 function prod(id){for(var i=0;i<S.products.length;i++){if(S.products[i].id===id||S.products[i].item_code===id)return S.products[i];}return null;}
 function cartCount(){return S.cart.reduce(function(s,c){return s+c.qty;},0);}
 function cartSum(){return S.cart.reduce(function(s,c){var p=prod(c.id);return s+(p?p.price*c.qty:0);},0);}
-function addToCart(id,qty){var f=false;S.cart.forEach(function(c){if(c.id===id){c.qty+=(qty||1);f=true;}});if(!f)S.cart.push({id:id,qty:qty||1});toast('Сагсанд нэмэгдлээ');plog('cart_add',{id:String(id||'')});render();}
-function setQty(id,d){S.cart=S.cart.map(function(c){return c.id===id?{id:id,qty:c.qty+d}:c;}).filter(function(c){return c.qty>0;});renderCart();render();}
+function addToCart(id,qty){var f=false;S.cart.forEach(function(c){if(c.id===id){c.qty+=(qty||1);f=true;}});if(!f)S.cart.push({id:id,qty:qty||1});saveCart();toast('Сагсанд нэмэгдлээ');plog('cart_add',{id:String(id||'')});render();}
+function setQty(id,d){S.cart=S.cart.map(function(c){return c.id===id?{id:id,qty:c.qty+d}:c;}).filter(function(c){return c.qty>0;});saveCart();renderCart();render();}
 function cartMath(){
   var gross=cartSum();
   var delivery=(gross===0)?0:((S.checkout.method==='ubcab')?0:(gross>=170000?0:5000));
@@ -558,11 +559,14 @@ function cartMath(){
   return {gross:gross,delivery:delivery,redeemAmt:redeemAmt,total:Math.max(0,gross+delivery-redeemAmt)};
 }
 
+function saveCart(){try{localStorage.setItem('lac_cart',JSON.stringify(S.cart));}catch(e){}}
+function restoreCart(){try{var c=JSON.parse(localStorage.getItem('lac_cart')||'[]');if(Array.isArray(c))S.cart=c.filter(function(x){return x&&x.id&&x.qty>0;});}catch(e){}}
+
 /* ---------------- routing (hash + Back-button aware) ---------------- */
 var FULLROUTES={product:1,checkout:1,assess:1,advisor:1,orders:1,subs:1};
 function go(tab){ if(S.cartOpen)closeCart(true); if(S.sheet)closeSheet(true); location.hash='#/'+tab; }
 function goRoute(name,param){ if(S.cartOpen)closeCart(true); if(S.sheet)closeSheet(true); location.hash='#/'+name+(param?('/'+encodeURIComponent(param)):''); }
-function openCart(){ if(S.cartOpen)return; S.cartOpen=true; history.pushState({lacCart:1},''); renderCart(); }
+function openCart(){ if(S.cartOpen)return; S.cartOpen=true; history.pushState({lacCart:1},''); loadCrossSell(); renderCart(); }
 function closeCart(fromPop){ if(!S.cartOpen)return; S.cartOpen=false; renderCart(); if(!fromPop && history.state && history.state.lacCart) history.back(); }
 function openSheet(name,data){ if(S.sheet)closeSheet(true); S.sheet=name; S.sheetData=(data===undefined?null:data); if(name==='notif'){S.notifDot=false;render();} history.pushState({lacSheet:1},''); renderSheet(); }
 function closeSheet(fromPop){ if(!S.sheet)return; S.sheet=null; S.sheetData=null; renderSheet(); if(!fromPop && history.state && history.state.lacSheet) history.back(); }
@@ -575,7 +579,7 @@ function syncHash(){
   if(TABS.indexOf(name)>=0){ S.tab=name; S.route=null; }
   else if(FULLROUTES[name]){ S.route={name:name,param:decodeURIComponent(parts[1]||'')}; }
   else { location.hash='#/home'; return; }
-  if(prevRoute==='checkout'&&(!S.route||S.route.name!=='checkout')){ stopPayPoll(); S.checkout={method:'standard',redeem:false,pay:null,done:null}; }
+  if(prevRoute==='checkout'&&(!S.route||S.route.name!=='checkout')){ stopPayPoll(); S.checkout={method:'standard',redeem:false,coupon:'',pay:null,done:null}; }
   render();
   var sc=document.querySelector('.scroll'); if(sc)sc.scrollTop=0; window.scrollTo(0,0);
   plog('screen_view',{page:name});
@@ -586,7 +590,7 @@ function syncHash(){
     if(S.route.name==='orders'&&S.orders===undefined)loadOrders().then(render);
     if(S.route.name==='subs'&&(S.subs===undefined||S.subs===null))loadSubs().then(render);
     if(S.route.name==='checkout'){
-      if(!S.checkout.pay&&!S.checkout.done){ S.checkout={method:'standard',redeem:false,pay:null,done:null}; if(!STANDALONE){loadAddresses().then(function(){ if(S.addresses&&S.addresses.length&&!S.checkout.addr)S.checkout.addr=S.addresses[0].name; render(); });} plog('checkout_start',{}); }
+      if(!S.checkout.pay&&!S.checkout.done){ S.checkout={method:'standard',redeem:false,coupon:'',pay:null,done:null}; if(!STANDALONE){loadAddresses().then(function(){ if(S.addresses&&S.addresses.length&&!S.checkout.addr)S.checkout.addr=S.addresses[0].name; render(); }); apiGet('portal_coupon_suggestions',{customer:custName()}).then(function(d){var m=(d&&d.message)||{};S.couponSuggestions=m.coupons||[];render();}).catch(function(){});} plog('checkout_start',{}); }
     }
     if(S.route.name==='product'&&S.route.param)loadProductDetail(S.route.param);
   }
@@ -724,6 +728,7 @@ function shopHTML(){
   h+='<div class="chips">'+S.categories.map(function(c){return '<button class="chip '+(S.cat===c?'on':'')+'" onclick="LAC.cat(\''+esc(c)+'\')">'+esc(c)+'</button>';}).join('')+'</div>';
   if(!list.length){return h+'<div class="empty"><div class="et">"'+esc(S.q)+'" олдсонгүй</div><div style="font-size:13px;margin-top:6px;">Өөр түлхүүр үг эсвэл ангилал сонгоно уу</div></div>';}
   h+='<div class="prods">'+list.map(prodCard).join('')+'</div>';
+  if(cartCount()>0){h+='<div style="position:sticky;bottom:14px;margin-top:18px;z-index:5;"><button class="btn full" style="box-shadow:0 12px 30px rgba(215,30,43,.4);" onclick="LAC.openCart()">'+icon('cart','width="18" height="18" stroke="#fff"')+' Сагс · '+cartCount()+' ширхэг · '+fmt(cartSum())+' — Харах</button></div>';}
   return h;
 }
 function rewardsCardHTML(){
@@ -791,10 +796,10 @@ function pstat(v,l){return '<div class="pstat"><div class="pv">'+esc(v)+'</div><
 /* ---------------- full routes ---------------- */
 function backHeader(title){return '<div class="route-h"><button class="backbtn" aria-label="Буцах" onclick="history.back()">'+icon('chev')+'</button><div class="rt">'+esc(title)+'</div></div>';}
 function prodCard(p){var id=esc(p.id||p.item_code||'');
-  return '<div class="prod"><div class="ph" onclick="LAC.product(\''+id+'\')"><img src="'+esc(p.img||p.image||'')+'" onerror="LAC.imgf(this)" alt="'+esc(p.name||'')+'"></div>'+
+  return '<div class="prod" style="cursor:pointer;" onclick="LAC.product(\''+id+'\')"><div class="ph"><img src="'+esc(p.img||p.image||'')+'" onerror="LAC.imgf(this)" alt="'+esc(p.name||'')+'"></div>'+
     '<div class="pb"><div class="pc">'+esc(p.cat||'')+'</div><div class="pn">'+esc(p.name||'')+'</div>'+
     (p.rating?'<div class="rate">'+icon('star','width="14" height="14"')+' '+esc(p.rating)+'</div>':'')+
-    '<div class="pp"><div class="price">'+fmt(p.price)+'</div><button class="add" aria-label="Сагслах" onclick="LAC.add(\''+id+'\')">'+icon('plus','width="19" height="19"')+'</button></div></div></div>';}
+    '<div class="pp"><div class="price">'+fmt(p.price)+'</div><button class="add" aria-label="Сагслах" onclick="event.stopPropagation();LAC.add(\''+id+'\')">'+icon('plus','width="19" height="19"')+'</button></div></div></div>';}
 
 function productDetailBlock(p){
   var id=p.id||p.item_code||'';
@@ -901,20 +906,33 @@ function checkoutHTML(){
   var redeemRow=bal>0?'<div class="optcard '+(S.checkout.redeem?'on':'')+'" style="margin-top:16px;" onclick="LAC.toggleRedeem()"><div class="radio"></div><div style="flex:1;"><div style="font-weight:700;font-size:14px;">LAC$ ашиглах</div><div style="font-size:12.5px;color:var(--muted);">Үлдэгдэл '+bal.toLocaleString('en-US')+' LAC$ · дүнгийн 30% хүртэл</div></div>'+(S.checkout.redeem?'<b style="color:var(--teal-t);">−'+fmt(m.redeemAmt)+'</b>':'')+'</div>':'';
   return backHeader('Захиалга баталгаажуулах')+
     addrBlock+
+    fdCreditNote()+
     '<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 2px 10px;">Хүргэлтийн арга</div>'+
     optCard('standard','Энгийн хүргэлт','Улаанбаатар хотод 1–2 хоног · '+(m.gross>=170000?'Үнэгүй':'₮5,000'),S.checkout.method==='standard')+
     optCard('ubcab','UBCab хүргэлт','Хүлээн авагч хүргэлтийн төлбөрөө UBCab-д төлнө',isU)+
     redeemRow+
+    couponBlockHTML()+
     '<div class="card" style="padding:16px;margin-top:16px;">'+sumRow('Бараа',fmt(m.gross))+sumRow('Хүргэлт',isU?'Хүлээн авагч төлнө':(m.delivery?fmt(m.delivery):'Үнэгүй'))+
       (m.redeemAmt>0?sumRow('LAC$ хөнгөлөлт','−'+fmt(m.redeemAmt)):'')+
       '<div style="display:flex;justify-content:space-between;font-family:var(--serif);font-size:18px;font-weight:700;border-top:1px solid var(--line);margin-top:8px;padding-top:12px;"><span>Нийт</span><span>'+fmt(m.total)+'</span></div></div>'+
     '<button class="btn full" style="margin-top:18px;"'+(!STANDALONE&&!S.checkout.addr?' disabled style="opacity:.5;"':'')+' onclick="LAC.confirmOrder()">'+(isU?'Захиалах (UBCab)':'Minu-р төлөх · '+fmt(m.total))+'</button>';
 }
+function fdCreditNote(){
+  var n=Number(S.customer&&S.customer.custom_free_delivery_credits)||0;
+  if(!n)return '';
+  return '<div class="delnote" style="margin-bottom:12px;">🎁 Танд '+n+' үнэгүй хүргэлтийн эрх байна — энэ захиалгад автоматаар ашиглагдана</div>';
+}
+function couponBlockHTML(){
+  var sugg=(S.couponSuggestions||[]);
+  var chips=sugg.length?'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">'+sugg.map(function(c){var code=c.coupon_code||c.name||'';return '<button class="chip" onclick="LAC.setCoupon(\''+esc(code)+'\')">'+esc(c.coupon_name||code)+'</button>';}).join('')+'</div>':'';
+  return '<div class="card" style="padding:16px;margin-top:16px;"><div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:10px;">Купон код</div>'+
+    '<input id="coupon-in" value="'+esc(S.checkout.coupon||'')+'" placeholder="Купон кодоо оруулна уу" oninput="LAC.setCouponSilent(this.value)" style="width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-family:var(--sans);font-size:15px;outline:none;text-transform:uppercase;">'+chips+'</div>';
+}
 function optCard(k,t,s,on){return '<div class="optcard '+(on?'on':'')+'" onclick="LAC.method(\''+k+'\')"><div class="radio"></div><div style="flex:1;"><div style="font-weight:700;font-size:14px;">'+esc(t)+'</div><div style="font-size:12.5px;color:var(--muted);">'+esc(s)+'</div></div></div>';}
 function sumRow(l,v){return '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px;color:var(--muted);"><span>'+esc(l)+'</span><span style="color:var(--ink);font-weight:600;">'+esc(v)+'</span></div>';}
 
 function confirmCheckout(){
-  if(STANDALONE){ S.cart=[]; S.checkout.done={invoice:'LAC-DEMO',grand_total:cartMath().total}; render(); return; }
+  if(STANDALONE){ S.cart=[]; saveCart(); S.checkout.done={invoice:'LAC-DEMO',grand_total:cartMath().total}; render(); return; }
   if(!S.checkout.addr){ toast('Хүргэлтийн хаягаа сонгоно уу'); return; }
   var m=cartMath();
   var items=S.cart.map(function(c){return {item_code:c.id,qty:c.qty,rate:0};});
@@ -922,10 +940,10 @@ function confirmCheckout(){
   toast('Захиалга үүсгэж байна…');
   apiPost('portal_customer_checkout',{
     customer:custName(), warehouse:'Ikh Mongol - L', delivery_address:S.checkout.addr,
-    items:JSON.stringify(items), coupon_code:'', loyalty_points:loy, delivery_method:(S.checkout.method||'standard')
+    items:JSON.stringify(items), coupon_code:(S.checkout.coupon||'').trim(), loyalty_points:loy, delivery_method:(S.checkout.method||'standard')
   }).then(function(d){
     if(d.payment_url){
-      S.cart=[]; S.checkout.pay=d; render(); startPayPoll(d.invoice);
+      S.cart=[]; saveCart(); S.checkout.pay=d; render(); startPayPoll(d.invoice);
     } else { toast(d.error||'Төлбөр үүсгэхэд алдаа гарлаа'); }
   }).catch(function(){ toast('Сүлжээний алдаа'); });
 }
@@ -990,7 +1008,13 @@ function advisorHTML(){
     var cards=(m.cards&&m.cards.length)?'<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">'+m.cards.map(function(c){
       return '<button class="chip" style="justify-content:flex-start;" onclick="LAC.product(\''+esc(c.item_code||'')+'\')">'+esc(c.item_name||c.item_code||'')+(c.price?' · '+fmt(c.price):'')+'</button>';
     }).join('')+'</div>':'';
-    return '<div class="bub '+(m.role==='me'?'me':'ai')+'">'+esc(m.text)+cards+'</div>';
+    var extra='';
+    if(m.action==='pay_invoice'&&m.payload&&m.payload.payment_url){S.chatPay=m.payload;extra='<button class="btn" style="margin-top:10px;" onclick="LAC.payFromChat()">💳 '+esc(m.payload.invoice||'')+' төлөх · '+fmt(m.payload.total)+'</button>';}
+    else if(m.action==='view_order'&&m.payload){extra='<button class="chip on" style="margin-top:10px;" onclick="LAC.track(\''+esc(m.payload.name||'')+'\')">Захиалга хянах · '+esc(m.payload.status||'')+'</button>';}
+    else if(m.action==='view_loyalty'){extra='<button class="chip on" style="margin-top:10px;" onclick="LAC.go(\'club\')">LAC Club үзэх</button>';}
+    else if(m.action==='complaint_logged'){extra='<div style="margin-top:8px;font-size:12px;color:var(--teal-t);font-weight:700;">✓ Гомдол бүртгэгдлээ — манай баг тантай холбогдоно</div>';}
+    if(m.sub&&m.sub.item_code){extra+='<button class="chip on" style="margin-top:8px;" onclick="LAC.subscribe(\''+esc(m.sub.item_code)+'\')">🔄 '+esc(m.sub.item_name||m.sub.item_code)+' тогтмол захиалах'+(m.sub.sub_price?' · '+fmt(m.sub.sub_price):'')+'</button>';}
+    return '<div class="bub '+(m.role==='me'?'me':'ai')+'">'+esc(m.text)+cards+extra+'</div>';
   }).join('');
   if(S.chatLoading)bubbles+='<div class="bub ai" style="color:var(--muted);">Бичиж байна…</div>';
   return backHeader('AI зөвлөгч')+
@@ -1006,7 +1030,7 @@ function advisorSend(v){
   var hist=S.chat.slice(-7).map(function(m){return {role:(m.role==='me'?'user':'assistant'),content:m.text};});
   apiPost('portal_ai_health_chat',{customer:custName(),message:v,history:JSON.stringify(hist)}).then(function(m){
     S.chatLoading=false;
-    S.chat.push({role:'ai',text:m.reply||'…',cards:m.cards||[]});
+    S.chat.push({role:'ai',text:m.reply||'…',cards:m.cards||[],action:m.action||null,payload:m.action_payload||null,sub:m.sub_upsell||null});
     render(); advisorScroll();
   }).catch(function(){ S.chatLoading=false; S.chat.push({role:'ai',text:'Сүлжээний алдаа гарлаа. Дахин оролдоно уу.'}); render(); advisorScroll(); });
 }
@@ -1026,10 +1050,35 @@ function ordersHTML(){
       '<div style="font-size:13px;color:var(--muted);margin:6px 0;">'+esc(String(o.posting_date||''))+'</div>'+
       (Number(o.outstanding_amount)>0?'<div style="font-size:12px;color:var(--crimson);margin-bottom:6px;">Үлдэгдэл төлбөр: '+fmt(o.outstanding_amount)+'</div>':'')+
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><div style="font-weight:800;">'+fmt(o.grand_total)+'</div>'+
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="chip" onclick="LAC.reorder(\''+esc(o.name)+'\')">Дахин захиалах</button>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">'+(Number(o.outstanding_amount)>0?'<button class="chip on" onclick="LAC.pay(\''+esc(o.name)+'\')">💳 Төлөх</button>':'')+'<button class="chip" onclick="LAC.reorder(\''+esc(o.name)+'\')">Дахин захиалах</button>'+
       '<button class="chip" onclick="LAC.pdf(\''+esc(o.name)+'\')">PDF</button>'+
-      '<button class="chip on" onclick="LAC.track(\''+esc(o.name)+'\')">Хянах</button></div></div></div>';
+      '<button class="chip'+(Number(o.outstanding_amount)>0?'':' on')+'" onclick="LAC.track(\''+esc(o.name)+'\')">Хянах</button></div></div></div>';
   }).join('')+'</div>';
+}
+function payInvoice(inv){
+  if(STANDALONE){toast('Preview горим');return;}
+  toast('Төлбөрийн холбоос үүсгэж байна…');
+  apiPost('portal_pay_invoice',{customer:custName(),invoice:inv}).then(function(m){
+    if(m.ok&&m.payment_url){
+      S.checkout.pay={invoice:inv,payment_url:m.payment_url,qr_image:m.qr_image||''};S.checkout.done=null;
+      goRoute('checkout'); startPayPoll(inv);
+    } else { toast(m.error==='already_paid'?'Энэ захиалга төлөгдсөн байна':'Төлбөр үүсгэж чадсангүй'); }
+  }).catch(function(){toast('Сүлжээний алдаа');});
+}
+function loadNotifs(){
+  if(STANDALONE){S.notifs=MOCK.notifs;return Promise.resolve();}
+  S.notifs=null;
+  return apiGet('portal_get_notifications').then(function(d){
+    var m=(d&&d.message)||{};S.notifs=m.notifications||[];
+    S.notifDot=S.notifs.some(function(n){return !!n.unread;});
+    render(); renderSheet();
+  }).catch(function(){S.notifs=[];renderSheet();});
+}
+function loadCrossSell(){
+  if(STANDALONE||!S.cart.length){S.crossSell=[];return;}
+  apiGet('portal_get_cross_sell',{item_code:S.cart[0].id,limit:3}).then(function(d){
+    var arr=(d&&d.message)||[];S.crossSell=Array.isArray(arr)?arr:[];renderCart();
+  }).catch(function(){S.crossSell=[];});
 }
 function doReorder(inv){
   if(STANDALONE){toast('Preview горим');return;}
@@ -1248,21 +1297,29 @@ function articleSheetBody(){
   if(!a||!a.title)return '<div class="empty"><div class="et">Нийтлэл ачаалж чадсангүй</div></div>';
   var dyk=a.did_you_know?'<div class="card" style="padding:14px;margin:14px 0;background:rgba(14,156,142,.07);border:1px solid rgba(14,156,142,.2);"><div style="font-weight:700;color:var(--teal-t);font-size:13px;margin-bottom:4px;">💡 Сонирхолтой</div><div style="font-size:13.5px;line-height:1.5;">'+esc(a.did_you_know)+'</div></div>':'';
   var ks=a.key_stat?'<div style="text-align:center;padding:16px;margin:14px 0;border-radius:16px;background:linear-gradient(155deg,#0C1B33,#132a4d);color:#fff;"><div style="font-size:14px;line-height:1.5;">'+esc(a.key_stat)+'</div></div>':'';
-  var prodBlk=a.item_code?'<div class="card" style="padding:14px;margin-top:16px;display:flex;gap:12px;align-items:center;cursor:pointer;" onclick="LAC.closeSheet();LAC.product(\''+esc(a.item_code)+'\')">'+
+  var pp=a.item_code?prod(a.item_code):null;
+  var prodBlk=a.item_code?'<div class="card" style="padding:14px;margin-top:16px;"><div style="display:flex;gap:12px;align-items:center;">'+
     (a.product_image?'<img src="'+esc(a.product_image)+'" onerror="LAC.imgf(this)" style="width:56px;height:56px;object-fit:contain;background:var(--cream);border-radius:12px;" alt="">':'')+
-    '<div style="flex:1;"><div style="font-size:11px;color:var(--teal-t);text-transform:uppercase;letter-spacing:.1em;">Холбоотой бүтээгдэхүүн</div><div style="font-family:var(--serif);font-weight:600;">'+esc(a.item_code)+'</div></div><span style="color:var(--muted);">›</span></div>':'';
+    '<div style="flex:1;min-width:0;"><div style="font-size:11px;color:var(--teal-t);text-transform:uppercase;letter-spacing:.1em;">Холбоотой бүтээгдэхүүн</div><div style="font-family:var(--serif);font-weight:600;">'+esc((pp&&pp.name)||a.item_code)+'</div>'+(pp?'<div style="font-weight:800;font-size:14px;margin-top:2px;">'+fmt(pp.price)+'</div>':'')+'</div></div>'+
+    '<div style="display:flex;gap:8px;margin-top:12px;"><button class="chip" style="flex:1;justify-content:center;" onclick="LAC.closeSheet();LAC.product(\''+esc(a.item_code)+'\')">Дэлгэрэнгүй</button>'+
+    '<button class="chip on" style="flex:1;justify-content:center;" onclick="LAC.add(\''+esc(a.item_code)+'\')">🛒 Сагслах</button></div></div>':'';
   var pos=a.poster_image_url?'<img src="'+esc(a.poster_image_url)+'" onerror="LAC.imgf(this)" style="width:100%;border-radius:16px;margin-bottom:14px;" alt="">':'';
   return '<div style="color:var(--teal-t);font-size:11px;text-transform:uppercase;letter-spacing:.1em;">'+esc(a.content_type||'Health Investor')+'</div>'+
     '<div style="font-family:var(--serif);font-size:22px;font-weight:600;line-height:1.25;margin:4px 0 14px;">'+esc(a.title)+'</div>'+pos+ks+
-    '<div style="font-size:15px;line-height:1.7;color:#22364d;">'+fmtBody(a.blog_content)+'</div>'+dyk+prodBlk+
-    '<div style="text-align:center;margin-top:18px;font-size:12px;color:var(--teal-t);">✓ Уншсаны төлөө +20 LAC$</div>';
+    '<div style="font-size:15px;line-height:1.7;color:#22364d;">'+fmtBody(a.blog_content)+'</div>'+dyk+prodBlk+claimBlockHTML();
+}
+function claimBlockHTML(){
+  var id=S.sheetData;
+  if(S.articleClaimed[id])return '<div style="text-align:center;margin-top:18px;font-size:13px;color:var(--teal-t);font-weight:700;">✓ Уншсаны оноо бүртгэгдсэн</div>';
+  if(!S.articleReady)return '<div style="text-align:center;margin-top:18px;font-size:12px;color:var(--muted);">Уншиж дуусаад оноогоо аваарай · өдөрт 1 нийтлэл +20 LAC$</div>';
+  return '<button class="btn full" style="margin-top:18px;" onclick="LAC.claimRead(\''+esc(id)+'\')">✓ Уншиж дууслаа — +20 LAC$ авах</button>'+
+    '<div style="text-align:center;margin-top:8px;font-size:11.5px;color:var(--muted);">Өдөрт нэг нийтлэлийн оноо тооцогдоно</div>';
 }
 function openArticle(id){
   if(STANDALONE){toast('Preview горим — нийтлэл ERPNext дээр нээгдэнэ');return;}
   if(!id){toast('Нийтлэл олдсонгүй');return;}
-  S.article=null; openSheet('article',id);
-  plog('article_read',{customer:custName(),article:id});
-  setTimeout(function(){loadDailyTasks().then(render);},900);
+  S.article=null; S.articleReady=false; openSheet('article',id);
+  setTimeout(function(){S.articleReady=true; if(S.sheet==='article')renderSheet();},18000);
   apiGet('hi_article',{name:id}).then(function(d){
     S.article=(d&&d.message&&d.message.article)||(d&&d.message)||{};
     renderSheet();
@@ -1479,10 +1536,12 @@ function renderSheet(){
   if(!S.sheet){root.innerHTML='';return;}
   var title='',body='';
   if(S.sheet==='notif'){title='Мэдэгдэл';
-    if(STANDALONE){body=MOCK.notifs.map(function(n){return '<div class="notif"><span class="ni">'+icon(n.icon,'width="19" height="19"')+'</span><div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:14px;">'+esc(n.title)+(n.unread?' <span style="color:var(--accent);">•</span>':'')+'</div><div style="font-size:13px;color:var(--muted);margin:2px 0;">'+esc(n.body)+'</div><div style="font-size:11.5px;color:var(--muted2);">'+esc(n.time)+'</div></div></div>';}).join('');}
-    else{body='<div class="empty">'+icon('bell','width="46" height="46"')+'<div class="et">Шинэ мэдэгдэл алга</div></div>';}}
+    var nlist=STANDALONE?MOCK.notifs:S.notifs;
+    if(!STANDALONE&&nlist===null){body=loadingBlock();}
+    else if(!nlist||!nlist.length){body='<div class="empty">'+icon('bell','width="46" height="46"')+'<div class="et">Шинэ мэдэгдэл алга</div></div>';}
+    else{body=nlist.map(function(n){return '<div class="notif"><span class="ni">'+icon(n.icon||'bell','width="19" height="19"')+'</span><div style="flex:1;min-width:0;"><div style="font-weight:700;font-size:14px;">'+esc(n.title)+(n.unread?' <span style="color:var(--accent);">•</span>':'')+'</div><div style="font-size:13px;color:var(--muted);margin:2px 0;">'+esc(n.body)+'</div><div style="font-size:11.5px;color:var(--muted2);">'+esc(n.time)+'</div></div></div>';}).join('');}}
   else if(S.sheet==='referral'){var r=S.referral||MOCK.referral;title='Найз урих';
-    body='<div style="text-align:center;padding:6px 0 10px;"><div style="font-size:14px;color:var(--muted);line-height:1.5;">Найзаа урьж <b style="color:var(--ink);">+'+r.reward+' LAC$</b>, найз чинь <b style="color:var(--ink);">+'+r.friendReward+' LAC$</b> аваарай</div>'+
+    body='<div style="text-align:center;padding:6px 0 10px;"><div style="font-size:14px;color:var(--muted);line-height:1.5;">Найзаа урьж, найзынхаа <b style="color:var(--ink);">худалдан авалт бүрээс 1%</b>-ийг LAC$ болгон цуглуулаарай</div>'+
       '<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin:18px 0;"><div style="font-family:var(--serif);font-size:24px;font-weight:700;letter-spacing:.12em;background:#fff;border:1px dashed var(--accent);border-radius:12px;padding:12px 20px;">'+esc(r.code)+'</div>'+
       '<button class="iconbtn" aria-label="Хуулах" onclick="LAC.copy(\''+esc(r.code)+'\')">'+icon('doc')+'</button></div>'+
       '<div style="font-size:13px;color:var(--muted);">'+r.invited+'/'+r.target+' найз урьсан</div></div>';}
@@ -1531,7 +1590,15 @@ function renderCart(){
       '<div class="qty"><button aria-label="Хасах" onclick="LAC.qty(\''+esc(c.id)+'\',-1)">−</button><span style="font-weight:700;min-width:18px;text-align:center;">'+c.qty+'</span><button aria-label="Нэмэх" onclick="LAC.qty(\''+esc(c.id)+'\',1)">+</button></div></div></div>';
   }).join('');
   var sum=cartSum();var toFree=170000-sum;
-  var body = S.cart.length ? lines : '<div class="empty">'+icon('cart','width="52" height="52"')+'<div class="et">Сагс хоосон байна</div><div style="font-size:13px;margin-top:4px;">Дэлгүүрээс бүтээгдэхүүн нэмээрэй</div></div>';
+  var xs='';
+  if(S.cart.length&&S.crossSell&&S.crossSell.length){
+    xs='<div style="margin-top:14px;"><div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:8px;">Хамт авбал тохиромжтой</div>'+S.crossSell.map(function(c){
+      return '<div style="display:flex;gap:10px;align-items:center;padding:8px 0;">'+(c.image?'<img src="'+esc(c.image)+'" onerror="LAC.imgf(this)" style="width:40px;height:40px;object-fit:contain;background:var(--cream);border-radius:10px;" alt="">':'')+
+      '<div style="flex:1;min-width:0;font-size:13px;font-weight:600;">'+esc(c.item_name||c.item_code)+'<div style="font-weight:800;font-size:12.5px;">'+fmt(c.price)+'</div></div>'+
+      '<button class="chip" onclick="LAC.add(\''+esc(c.item_code)+'\')">＋</button></div>';
+    }).join('')+'</div>';
+  }
+  var body = S.cart.length ? lines+xs : '<div class="empty">'+icon('cart','width="52" height="52"')+'<div class="et">Сагс хоосон байна</div><div style="font-size:13px;margin-top:4px;">Дэлгүүрээс бүтээгдэхүүн нэмээрэй</div></div>';
   var footer = S.cart.length ? '<div class="drawer-f"><div class="delnote">'+(sum>=170000?'✓ Үнэгүй хүргэлтэд хүрсэн байна':'Үнэгүй хүргэлт хүртэл '+fmt(toFree)+' үлдлээ')+'</div>'+
     '<div class="total"><span>Нийт</span><span>'+fmt(sum)+'</span></div><button class="btn full" onclick="LAC.checkout()">Захиалга үргэлжлүүлэх</button></div>' : '';
   root.innerHTML='<div class="ov" onclick="LAC.closeCart()"><div class="drawer" onclick="event.stopPropagation()">'+
@@ -1571,7 +1638,7 @@ window.LAC={
     else if(k==='settings')openSheet('settings');
     else if(k==='report')openSheet('report');
   },
-  notif:function(){ openSheet('notif'); },
+  notif:function(){ openSheet('notif'); if(!STANDALONE&&(S.notifs===undefined||S.notifs===null))loadNotifs(); },
   checkout:function(){ if(!S.cart.length){toast('Сагс хоосон байна');return;} goRoute('checkout'); },
   method:function(m){ S.checkout.method=m; render(); },
   toggleRedeem:function(){ S.checkout.redeem=!S.checkout.redeem; render(); },
@@ -1609,6 +1676,11 @@ window.LAC={
   otpSend:phoneOtpSend, otpVerify:phoneOtpVerify,
   saveInfo:saveInfo, pref:togglePref,
   reportSend:submitReport,
+  pay:payInvoice,
+  payFromChat:function(){ var p=S.chatPay; if(!p||!p.payment_url)return; S.checkout.pay={invoice:p.invoice,payment_url:p.payment_url,qr_image:p.qr_image||''}; S.checkout.done=null; goRoute('checkout'); startPayPoll(p.invoice); },
+  claimRead:function(id){ if(S.articleClaimed[id]){toast('Энэ нийтлэлийн оноо бүртгэгдсэн');return;} plog('article_read',{customer:custName(),article:id}); S.articleClaimed[id]=1; toast('+20 LAC$ бүртгэгдлээ · өдөрт 1 нийтлэл'); renderSheet(); setTimeout(function(){loadDailyTasks().then(render);},1200); },
+  setCoupon:function(c){ S.checkout.coupon=c; render(); },
+  setCouponSilent:function(v){ S.checkout.coupon=v; },
   toast:toast, imgf:imgFallback
 };
 
