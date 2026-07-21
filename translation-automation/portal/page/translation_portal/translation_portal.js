@@ -442,12 +442,11 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const d = new frappe.ui.Dialog({
       title: 'Import a reviewed .docx (comments + tracked changes)',
       fields: [{ fieldname: 'file', fieldtype: 'Attach', label: 'Reviewed .docx', reqd: 1 },
-      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Download from Google Docs as <b>Word (.docx)</b> with suggestions & comments intact, then upload here. Changes attach to matching segments as Accept/Reject cards; comments attach to the timeline.</div>' }],
-      primary_action_label: 'Import',
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Upload the reviewer\'s Word (.docx) with tracked changes &amp; comments. This <b>replaces</b> any previously imported review (no duplicates): changes attach to matching segments as Accept/Reject cards; comments attach to the timeline. Runs in the background.</div>' }],
+      primary_action_label: 'Import (replace)',
       primary_action(v) {
-        d.hide(); frappe.show_alert({ message: 'Reading revisions…', indicator: 'blue' });
-        frappe.call({ method: 'lac_translation.api.import_revisions', args: { project: S.project, file_url: v.file } })
-          .then(r => { const m = r.message || {}; frappe.show_alert({ message: 'Imported ' + (m.suggestions || 0) + ' change(s), ' + (m.comments || 0) + ' comment(s)', indicator: 'green' }); loadSegs(); });
+        d.hide(); frappe.show_alert({ message: 'Importing revisions in the background — refresh in a moment…', indicator: 'blue' });
+        frappe.call({ method: 'lac_translation.api.reimport_review', args: { project: S.project, file_url: v.file } });
       },
     });
     d.show();

@@ -1770,3 +1770,34 @@ def export_docx_grouped(project):
     f = save_file(fname, buf.getvalue(), "Translation Project", project, is_private=1)
     frappe.db.commit()
     return {"file_url": f.file_url}
+
+
+# --------------------------------------------------------------------------
+# Re-import a reviewer's marked-up docx cleanly: clear the previous imported
+# review first so an updated file never piles duplicates on top. Idempotent.
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def reimport_review(project, file_url):
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._reimport_review_job", queue="long", timeout=6000,
+                   project=project, file_url=file_url)
+    return {"queued": True}
+
+
+def _reimport_review_job(project, file_url):
+    # remove the previous imported review (suggestions + segment comments)
+    for n in frappe.get_all("Translation Suggestion",
+                            filters={"project": project, "origin": "Imported"}, pluck="name"):
+        frappe.delete_doc("Translation Suggestion", n, ignore_permissions=True, force=True)
+    seg_names = frappe.get_all("Translation Segment", filters={"project": project}, pluck="name")
+    if seg_names:
+        for n in frappe.get_all("Comment", filters={
+                "reference_doctype": "Translation Segment",
+                "reference_name": ["in", seg_names], "comment_type": "Comment"}, pluck="name"):
+            frappe.delete_doc("Comment", n, ignore_permissions=True, force=True)
+    frappe.db.commit()
+    res = import_revisions(project, file_url)
+    frappe.db.commit()
+    print(json.dumps(res, ensure_ascii=False))
+    return res
