@@ -1966,3 +1966,41 @@ def setup_reviewer(email, first_name="Reviewer", password=None):
         update_password(email, password)
     frappe.db.commit()
     return {"role": role, "user": email, "portal": "/app/translation-portal"}
+
+
+@frappe.whitelist()
+def fill_empties(project, model="gpt-4o"):
+    """Translate any segments left with an empty Mongolian (e.g. the few the
+    faithful build returned blank), so the book is 100% complete."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._fill_empties_job", queue="long", timeout=4000,
+                   project=project, model=model)
+    return {"queued": True}
+
+
+def _fill_empties_job(project, model="gpt-4o"):
+    headers = _headers()
+    proj = frappe.get_doc("Translation Project", project)
+    glossary = _eff_glossary(proj)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "source_text", "draft_text", "final_text"],
+                          order_by="seq asc", limit_page_length=0)
+    empties = [s for s in segs
+               if not (s.get("final_text") or s.get("draft_text") or "").strip()
+               and (s.get("source_text") or "").strip()]
+    n = 0
+    for i in range(0, len(empties), 12):
+        chunk = empties[i:i + 12]
+        items = [{"id": j, "en": chunk[j]["source_text"]} for j in range(len(chunk))]
+        try:
+            tr, _u = _translate_en(model, headers, glossary, items)
+        except Exception:
+            tr = {}
+        for j in range(len(chunk)):
+            mn = (tr.get(j) or "").strip()
+            if mn:
+                frappe.db.set_value("Translation Segment", chunk[j]["name"],
+                                    {"draft_text": mn, "final_text": mn}, update_modified=False)
+                n += 1
+        frappe.db.commit()
+    return {"filled": n, "of": len(empties)}
