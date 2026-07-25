@@ -1801,3 +1801,25 @@ def _reimport_review_job(project, file_url):
     frappe.db.commit()
     print(json.dumps(res, ensure_ascii=False))
     return res
+
+
+@frappe.whitelist()
+def clear_review(project):
+    """Remove all imported review (suggestions + segment comments) from a
+    project, without importing anything. For undoing a review imported onto the
+    wrong book."""
+    frappe.only_for("System Manager")
+    ns = frappe.get_all("Translation Suggestion",
+                        filters={"project": project, "origin": "Imported"}, pluck="name")
+    for n in ns:
+        frappe.delete_doc("Translation Suggestion", n, ignore_permissions=True, force=True)
+    seg = frappe.get_all("Translation Segment", filters={"project": project}, pluck="name")
+    nc = 0
+    if seg:
+        for n in frappe.get_all("Comment", filters={
+                "reference_doctype": "Translation Segment",
+                "reference_name": ["in", seg], "comment_type": "Comment"}, pluck="name"):
+            frappe.delete_doc("Comment", n, ignore_permissions=True, force=True)
+            nc += 1
+    frappe.db.commit()
+    return {"cleared_suggestions": len(ns), "cleared_comments": nc}
