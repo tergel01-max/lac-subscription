@@ -1823,3 +1823,91 @@ def clear_review(project):
             nc += 1
     frappe.db.commit()
     return {"cleared_suggestions": len(ns), "cleared_comments": nc}
+
+
+# --------------------------------------------------------------------------
+# finalize_review: one action to (1) clear any review wrongly imported onto the
+# PDF-faithful book, (2) import the reviewer's docx onto the human translation,
+# and (3) bridge the reviewer's COMMENTS onto the PDF-faithful book by matching
+# English position. Comments carry over; detailed sentence edits stay on the
+# human copy (they only line up there).
+# --------------------------------------------------------------------------
+
+def _rnorm(t):
+    return re.sub(r"\s+", " ", (t or "")).strip()
+
+
+def _clear_review_inner(project):
+    ns = frappe.get_all("Translation Suggestion",
+                        filters={"project": project, "origin": "Imported"}, pluck="name")
+    for n in ns:
+        frappe.delete_doc("Translation Suggestion", n, ignore_permissions=True, force=True)
+    seg = frappe.get_all("Translation Segment", filters={"project": project}, pluck="name")
+    nc = 0
+    if seg:
+        for n in frappe.get_all("Comment", filters={
+                "reference_doctype": "Translation Segment",
+                "reference_name": ["in", seg], "comment_type": "Comment"}, pluck="name"):
+            frappe.delete_doc("Comment", n, ignore_permissions=True, force=True)
+            nc += 1
+    return len(ns), nc
+
+
+def _bridge_comments(human_project, final_project):
+    """Copy reviewer comments from the human project's segments onto the
+    PDF-faithful project's segments, matched by English sentence."""
+    fmap = {}
+    for s in frappe.get_all("Translation Segment", filters={"project": final_project},
+                            fields=["name", "source_text"], limit_page_length=0):
+        k = _rnorm(s.get("source_text"))[:60]
+        if k:
+            fmap.setdefault(k, s["name"])
+    hsegs = {s["name"]: s.get("source_text") for s in frappe.get_all(
+             "Translation Segment", filters={"project": human_project},
+             fields=["name", "source_text"], limit_page_length=0)}
+    hnames = list(hsegs.keys())
+    n = 0
+    if not hnames:
+        return 0
+    for c in frappe.get_all("Comment", filters={
+            "reference_doctype": "Translation Segment", "reference_name": ["in", hnames],
+            "comment_type": "Comment"}, fields=["reference_name", "content"], limit_page_length=0):
+        parts = _split_sentences(hsegs.get(c["reference_name"]) or "")
+        key = _rnorm(parts[0])[:60] if parts else ""
+        target = fmap.get(key)
+        if target:
+            frappe.get_doc({"doctype": "Comment", "comment_type": "Comment",
+                            "reference_doctype": "Translation Segment", "reference_name": target,
+                            "content": "[reviewer] " + (c["content"] or "")}).insert(ignore_permissions=True)
+            n += 1
+    return n
+
+
+@frappe.whitelist()
+def finalize_review(human_project, review_file_url, final_project=None):
+    frappe.only_for("System Manager")
+    title = frappe.db.get_value("Translation Project", human_project, "title") or ""
+    if "pdf-faithful" in title.lower():
+        frappe.throw("Select the human translation (not the PDF-faithful book) as the current book, then import the review.")
+    frappe.enqueue("lac_translation.api._finalize_review_job", queue="long", timeout=9000,
+                   human_project=human_project, review_file_url=review_file_url,
+                   final_project=final_project)
+    return {"queued": True}
+
+
+def _finalize_review_job(human_project, review_file_url, final_project=None):
+    if not final_project:
+        cand = frappe.get_all("Translation Project", filters={"title": ["like", "%PDF-faithful%"]},
+                              fields=["name"], order_by="creation desc", limit_page_length=1)
+        final_project = cand[0]["name"] if cand else None
+    cleared_final = _clear_review_inner(final_project) if final_project else (0, 0)
+    _clear_review_inner(human_project)
+    frappe.db.commit()
+    res = import_revisions(human_project, review_file_url)
+    bridged = _bridge_comments(human_project, final_project) if final_project else 0
+    frappe.db.commit()
+    out = {"human_project": human_project, "final_project": final_project,
+           "cleared_from_final": cleared_final, "imported_to_human": res,
+           "comments_bridged_to_final": bridged}
+    print(json.dumps(out, ensure_ascii=False))
+    return out

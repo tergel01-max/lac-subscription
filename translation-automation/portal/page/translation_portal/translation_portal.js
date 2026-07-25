@@ -440,13 +440,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpImportRev').onclick = () => {
     if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
     const d = new frappe.ui.Dialog({
-      title: 'Import a reviewed .docx (comments + tracked changes)',
-      fields: [{ fieldname: 'file', fieldtype: 'Attach', label: 'Reviewed .docx', reqd: 1 },
-      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Upload the reviewer\'s Word (.docx) with tracked changes &amp; comments. This <b>replaces</b> any previously imported review (no duplicates): changes attach to matching segments as Accept/Reject cards; comments attach to the timeline. Runs in the background.</div>' }],
-      primary_action_label: 'Import (replace)',
+      title: 'Import reviewer changes (comments + tracked changes)',
+      fields: [{ fieldname: 'file', fieldtype: 'Attach', label: 'Reviewed .docx (of the human translation)', reqd: 1 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Select the <b>human translation</b> book above, then upload the reviewer\'s Word (.docx). This <b>replaces</b> any earlier review (no duplicates), attaches their edits here as Accept/Reject cards, and <b>copies their comments onto the PDF-faithful final book</b> by position. Runs in the background.</div>' }],
+      primary_action_label: 'Import review',
       primary_action(v) {
-        d.hide(); frappe.show_alert({ message: 'Importing revisions in the background — refresh in a moment…', indicator: 'blue' });
-        frappe.call({ method: 'lac_translation.api.reimport_review', args: { project: S.project, file_url: v.file } });
+        d.hide(); frappe.show_alert({ message: 'Importing review + bridging comments in the background — refresh in a moment…', indicator: 'blue' });
+        frappe.call({ method: 'lac_translation.api.finalize_review', args: { human_project: S.project, review_file_url: v.file } });
       },
     });
     d.show();
