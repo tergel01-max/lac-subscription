@@ -344,6 +344,12 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpGloss').onclick = () => overlay('Glossary / style guide', '<pre>' + esc(S.glossary || 'No glossary set for this project.') + '</pre>');
   $id('tpTxt').onclick = () => { const txt = S.segs.map(s => s.final_text || s.ai_suggestion || s.draft_text || '').join('\n'); const b = new Blob([txt], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (S.projects.find(p => p.name === S.project)?.title || 'book') + '_MN.txt'; a.click(); };
   $id('tpDocx').onclick = () => { if (!S.project) return; frappe.show_alert({ message: 'Building .docx…', indicator: 'blue' }); frappe.call({ method: 'lac_translation.api.export_docx_grouped', args: { project: S.project } }).then(r => { if (r.message && r.message.file_url) window.open(r.message.file_url, '_blank'); }); };
+
+  // Reviewers (non-admins) get a clean review-only view: hide the admin
+  // controls (bulk AI generate + the ⋯ More menu of import/align/export tools).
+  if (!frappe.user.has_role('System Manager')) {
+    ['tpAI', 'tpMore'].forEach(id => { const el = $id(id); if (el) el.style.display = 'none'; });
+  }
   $id('tpGen').onclick = () => {
     if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
     const chapters = [...new Set(S.segs.map(s => s.chapter || 'Book'))];

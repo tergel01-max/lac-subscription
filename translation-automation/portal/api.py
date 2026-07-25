@@ -1911,3 +1911,58 @@ def _finalize_review_job(human_project, review_file_url, final_project=None):
            "comments_bridged_to_final": bridged}
     print(json.dumps(out, ensure_ascii=False))
     return out
+
+
+# --------------------------------------------------------------------------
+# Reviewer access: create a limited "Translation Reviewer" role (portal +
+# review permissions only, no admin), grant the portal page, and create/enable
+# a reviewer user. Lets a redactor review live in the portal — no docx round-trip.
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def setup_reviewer(email, first_name="Reviewer", password=None):
+    frappe.only_for("System Manager")
+    from frappe.permissions import add_permission, update_permission_property
+    role = "Translation Reviewer"
+    if not frappe.db.exists("Role", role):
+        frappe.get_doc({"doctype": "Role", "role_name": role, "desk_access": 1}).insert(ignore_permissions=True)
+
+    perms = {
+        "Translation Project": ["read"],
+        "Translation Segment": ["read", "write"],
+        "Translation Suggestion": ["read", "write", "create", "delete"],
+        "Translation Term": ["read"],
+        "Comment": ["read", "create"],
+    }
+    for dt, ptypes in perms.items():
+        try:
+            add_permission(dt, role, 0)
+        except Exception:
+            pass
+        for p in ptypes:
+            try:
+                update_permission_property(dt, role, 0, p, 1)
+            except Exception:
+                pass
+
+    # grant the portal page to the role
+    pg = frappe.get_doc("Page", "translation-portal")
+    if not any((r.role == role) for r in (pg.roles or [])):
+        pg.append("roles", {"role": role})
+        pg.save(ignore_permissions=True)
+
+    # create / enable the reviewer user
+    if frappe.db.exists("User", email):
+        u = frappe.get_doc("User", email)
+        u.enabled = 1
+    else:
+        u = frappe.get_doc({"doctype": "User", "email": email, "first_name": first_name,
+                            "send_welcome_email": 0, "user_type": "System User"}).insert(ignore_permissions=True)
+    if not any((r.role == role) for r in (u.roles or [])):
+        u.append("roles", {"role": role})
+    u.save(ignore_permissions=True)
+    if password:
+        from frappe.utils.password import update_password
+        update_password(email, password)
+    frappe.db.commit()
+    return {"role": role, "user": email, "portal": "/app/translation-portal"}
