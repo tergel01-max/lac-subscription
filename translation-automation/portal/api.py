@@ -2004,3 +2004,62 @@ def _fill_empties_job(project, model="gpt-4o"):
                 n += 1
         frappe.db.commit()
     return {"filled": n, "of": len(empties)}
+
+
+@frappe.whitelist()
+def fix_chapter_labels(project, model="gpt-4o"):
+    """Give every chapter a single Mongolian heading: the faithful build left
+    the first few sentences of each chapter tagged with the English title (then
+    the Mongolian title on the rest), which prints a double heading. Merge the
+    English head into the following Mongolian chapter title (or translate it if
+    there is none)."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._fix_chapter_labels_job", queue="long",
+                   timeout=4000, project=project, model=model)
+    return {"queued": True}
+
+
+def _fix_chapter_labels_job(project, model="gpt-4o"):
+    headers = _headers()
+    proj = frappe.get_doc("Translation Project", project)
+    glossary = _eff_glossary(proj)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "chapter"],
+                          order_by="seq asc, creation asc", limit_page_length=0)
+    runs = []
+    for s in segs:
+        c = s.get("chapter") or ""
+        if not runs or runs[-1]["ch"] != c:
+            runs.append({"ch": c, "items": [s["name"]]})
+        else:
+            runs[-1]["items"].append(s["name"])
+
+    def is_latin(t):
+        return len(re.findall(r"[A-Za-z]", t or "")) > len(re.findall(r"[Ѐ-ӿ]", t or ""))
+
+    cache = {}
+    updates = []
+    for idx, r in enumerate(runs):
+        ch = r["ch"]
+        if not ch or not is_latin(ch):
+            continue
+        target = None
+        if idx + 1 < len(runs) and runs[idx + 1]["ch"].strip() and not is_latin(runs[idx + 1]["ch"]):
+            target = runs[idx + 1]["ch"]
+        else:
+            if ch not in cache:
+                try:
+                    tt, _u = _translate_en(model, headers, glossary, [{"id": 0, "en": ch}])
+                    cache[ch] = (tt.get(0) or ch).upper()[:130]
+                except Exception:
+                    cache[ch] = ch
+            target = cache[ch]
+        if target and target != ch:
+            for nm in r["items"]:
+                updates.append((nm, target))
+    for i, (nm, tc) in enumerate(updates):
+        frappe.db.set_value("Translation Segment", nm, {"chapter": tc}, update_modified=False)
+        if i % 200 == 0:
+            frappe.db.commit()
+    frappe.db.commit()
+    return {"relabeled_segments": len(updates)}
