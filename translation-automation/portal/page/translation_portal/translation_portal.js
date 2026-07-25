@@ -89,7 +89,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   function loadProjects() {
     return frappe.db.get_list('Translation Project', { fields: ['name', 'title', 'glossary'], limit: 0, order_by: 'creation desc' })
       .then(r => {
-        S.projects = r || [];
+        S.projects = (r || []).filter(p => !/^\s*\[archived\]/i.test(p.title || ''));
         $id('tpBook').innerHTML = S.projects.map(p => `<option value="${p.name}">${esc(p.title || p.name)}</option>`).join('') || '<option>No projects</option>';
         if (S.projects.length) { S.project = S.projects[0].name; S.glossary = S.projects[0].glossary || ''; return loadSegs(); }
       });
