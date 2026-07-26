@@ -215,22 +215,33 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   function myReviewerSug(name) { return (S.suggestions || []).find(x => x.segment === name && x.author === frappe.session.user && x.origin === 'Reviewer'); }
   function startEdit(el, name) {
     const s = S.segs.find(x => x.name === name); if (!s || !el) return;
-    const shown = sugFor(name);   // start from whatever is displayed (her edit, or an imported change), else the current text
-    editEl = el; editName = name;
+    const base = s.final_text || s.ai_suggestion || s.draft_text || '';
+    const shown = sugFor(name);   // reviewers start from the shown suggestion (build on it); editors from the book text
+    const init = frappe.user.has_role('System Manager') ? base : ((shown && (shown.suggested_text || '').trim()) ? shown.suggested_text : base);
+    editEl = el; editName = name; el._initial = (init || '').trim();
     el.classList.add('editing'); el.classList.remove('has-sug');
-    el.textContent = (shown && (shown.suggested_text || '').trim()) ? shown.suggested_text : (s.final_text || s.ai_suggestion || s.draft_text || '');
+    el.textContent = init;
     try { el.contentEditable = 'plaintext-only'; } catch (e) { }
     if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
     el.focus();
     const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
     const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
   }
-  function autoSave(el, name) {                       // upsert this reviewer's suggestion from the live text
+  function autoSave(el, name) {                       // save the live text — editor: to the book; reviewer: as a suggestion
     const s = S.segs.find(x => x.name === name); if (!s || !el) return;
     const txt = (el.textContent || '').trim();
     const base = (s.final_text || s.ai_suggestion || s.draft_text || '').trim();
     el._latest = txt;                                  // remember the newest text for post-create reconciliation
     const box = $id('tpDrawerInner') && $id('tpDrawerInner').querySelector('.tp-suggest'); if (box) box.value = el.textContent;  // mirror into the panel
+    if (frappe.user.has_role('System Manager')) {      // editor edits the book text directly (like the Final box, inline)
+      if (txt && txt !== (s.final_text || '').trim()) {
+        const st = (txt === (s.ai_suggestion || '').trim() || txt === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited';
+        s.final_text = txt; s.status = st;
+        frappe.db.set_value('Translation Segment', name, { final_text: txt, status: st });
+      }
+      updateChangeInfo(); return;
+    }
+    if (txt === (el._initial || '')) { updateChangeInfo(); return; }   // unchanged since opening → no-op (safe click-through)
     const mine = myReviewerSug(name);
     if (!txt || txt === base) {                        // cleared / reverted → drop the suggestion
       if (mine) { const nm = mine.name; S.suggestions = S.suggestions.filter(x => x.name !== nm); frappe.call({ method: 'frappe.client.delete', args: { doctype: 'Translation Suggestion', name: nm } }); }
@@ -387,7 +398,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       if (rs === editEl) return;                        // already editing this one — let the caret move
       if (editEl) commitEdit();                         // finish the previous sentence first
       openDrawer(rs.dataset.name);                      // open the side panel for context
-      if (!frappe.user.has_role('System Manager')) startEdit(rs, rs.dataset.name);   // reviewers edit right here
+      startEdit(rs, rs.dataset.name);                   // and make the sentence editable in place
       return;
     }
     const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
