@@ -347,10 +347,15 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpTxt').onclick = () => { const txt = S.segs.map(s => s.final_text || s.ai_suggestion || s.draft_text || '').join('\n'); const b = new Blob([txt], { type: 'text/plain;charset=utf-8' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = (S.projects.find(p => p.name === S.project)?.title || 'book') + '_MN.txt'; a.click(); };
   $id('tpDocx').onclick = () => { if (!S.project) return; frappe.show_alert({ message: 'Building .docx…', indicator: 'blue' }); frappe.call({ method: 'lac_translation.api.export_docx_grouped', args: { project: S.project } }).then(r => { if (r.message && r.message.file_url) window.open(r.message.file_url, '_blank'); }); };
 
-  // Reviewers (non-admins) get a clean review-only view: hide the admin
-  // controls (bulk AI generate + the ⋯ More menu of import/align/export tools).
+  // Reviewers (non-admins) get a clean review-only view. They KEEP the ⋯ More
+  // menu so they can open Terms/Glossary (adding approved terminology is their
+  // core job) — we only hide the admin book-management tools (bulk AI generate,
+  // import/align/audit/complete/export).
   if (!frappe.user.has_role('System Manager')) {
-    ['tpAI', 'tpMore'].forEach(id => { const el = $id(id); if (el) el.style.display = 'none'; });
+    ['tpGen', 'tpImport', 'tpImportReviewed', 'tpImportRev', 'tpRealign',
+     'tpAudit', 'tpComplete', 'tpRevert', 'tpTxt', 'tpDocx']
+      .forEach(id => { const el = $id(id); if (el) el.style.display = 'none'; });
+    document.querySelectorAll('#tpMenu .tp-mi-sep').forEach(el => { el.style.display = 'none'; });
   }
   $id('tpGen').onclick = () => {
     if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
@@ -461,15 +466,21 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   };
 
   function openTerms() {
+    const isAdmin = frappe.user.has_role('System Manager');
     const rows = (S.terms || []).map(t => {
       const uses = S.segs.filter(s => (s.source_text || '').toLowerCase().includes((t.source_term || '').toLowerCase())).length;
       const off = S.segs.filter(s => { const eff = s.final_text || s.ai_suggestion || s.draft_text || ''; return (s.source_text || '').toLowerCase().includes((t.source_term || '').toLowerCase()) && eff && !eff.toLowerCase().includes((t.target_term || '').toLowerCase()); }).length;
-      return `<tr><td><b>${esc(t.source_term)}</b></td><td>${esc(t.target_term)}</td><td style="text-align:center">${uses}</td><td style="text-align:center;color:${off ? 'var(--s-Suggested)' : 'var(--s-Accepted)'};font-weight:700">${off}</td><td><button class="tp-btn" data-tapply="${esc(t.source_term)}|||${esc(t.target_term)}" style="padding:3px 9px;font-size:12px">Apply everywhere</button></td></tr>`;
+      const applyCell = isAdmin ? `<button class="tp-btn" data-tapply="${esc(t.source_term)}|||${esc(t.target_term)}" style="padding:3px 9px;font-size:12px">Apply everywhere</button>` : '';
+      return `<tr><td><b>${esc(t.source_term)}</b></td><td>${esc(t.target_term)}</td><td style="text-align:center">${uses}</td><td style="text-align:center;color:${off ? 'var(--s-Suggested)' : 'var(--s-Accepted)'};font-weight:700">${off}</td><td>${applyCell}</td></tr>`;
     }).join('') || '<tr><td colspan="5" style="color:var(--faint);padding:14px">No terms yet — add one below.</td></tr>';
+    const applyBtn = isAdmin ? '<button class="tp-btn" id="tt_apply">Add + apply</button>' : '';
+    const note = isAdmin
+      ? '“Uses” = segments containing the English term. “Off” = those not yet using the approved translation. “Apply everywhere” re-generates the off ones (locked segments are left alone).'
+      : '“Uses” = segments containing the English term. “Off” = those not yet using the approved translation. Add approved terms here to keep terminology consistent.';
     const body = `<div style="font-family:system-ui">
       <table class="tp-terms"><thead><tr><th>Source (EN)</th><th>Approved (MN)</th><th>Uses</th><th>Off</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="tp-termadd"><input id="tt_s" placeholder="English term"><input id="tt_t" placeholder="Approved Mongolian"><button class="tp-btn primary" id="tt_add">Add</button><button class="tp-btn" id="tt_apply">Add + apply</button></div>
-      <div style="font-size:12px;color:var(--faint);margin-top:8px">“Uses” = segments containing the English term. “Off” = those not yet using the approved translation. “Apply everywhere” re-generates the off ones (locked segments are left alone).</div>
+      <div class="tp-termadd"><input id="tt_s" placeholder="English term"><input id="tt_t" placeholder="Approved Mongolian"><button class="tp-btn primary" id="tt_add">Add</button>${applyBtn}</div>
+      <div style="font-size:12px;color:var(--faint);margin-top:8px">${note}</div>
     </div>`;
     overlay('Termbase — ' + (S.terms || []).length + ' term(s)', body);
     const ov = document.querySelector('#tpOverlay');
@@ -481,7 +492,8 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         .then(r => { frappe.show_alert({ message: apply ? ('Applying to ' + ((r.message || {}).affected || 0) + '…') : 'Term added', indicator: 'blue' }); loadTerms().then(openTerms); });
     };
     ov.querySelector('#tt_add').onclick = () => add(false);
-    ov.querySelector('#tt_apply').onclick = () => add(true);
+    const applyEl = ov.querySelector('#tt_apply');
+    if (applyEl) applyEl.onclick = () => add(true);
     ov.querySelectorAll('[data-tapply]').forEach(b => b.onclick = () => {
       const [s, t] = b.getAttribute('data-tapply').split('|||');
       frappe.confirm('Re-generate all non-locked segments to use “' + s + '” → “' + t + '”?', () => {

@@ -406,7 +406,7 @@ def export_docx(project):
 @frappe.whitelist()
 def add_term(project, source_term, target_term, note=""):
     """Create or update one approved term in the book's termbase."""
-    frappe.only_for("System Manager")
+    frappe.only_for(["System Manager", "Translation Reviewer"])
     existing = frappe.db.exists("Translation Term", {"project": project, "source_term": source_term})
     if existing:
         d = frappe.get_doc("Translation Term", existing)
@@ -1931,7 +1931,9 @@ def setup_reviewer(email, first_name="Reviewer", password=None):
         "Translation Project": ["read"],
         "Translation Segment": ["read", "write"],
         "Translation Suggestion": ["read", "write", "create", "delete"],
-        "Translation Term": ["read"],
+        # reviewer curates terminology (their core concern) — but apply_term
+        # (AI re-generation across the book) stays System-Manager-only.
+        "Translation Term": ["read", "write", "create"],
         "Comment": ["read", "create"],
         # so commenting/editing doesn't fail on Frappe's notification writes
         "Notification Log": ["read", "write", "create", "delete"],
