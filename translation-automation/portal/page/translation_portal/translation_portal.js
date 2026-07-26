@@ -207,8 +207,66 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   // wins; otherwise show whatever suggestion exists — e.g. the imported review)
   function sugFor(name) { const arr = (S.suggestions || []).filter(x => x.segment === name); return arr.find(x => x.origin === 'Reviewer' && x.author === frappe.session.user) || arr[0] || null; }
 
+  // ---- inline editing in the reading text (edit on the left → auto-saved as a
+  // suggestion). Kept race-free: no full re-render while editing; the one edited
+  // sentence repaints itself; the save is debounced and upserts a single suggestion.
+  let editEl = null, editName = null, editTimer = null;
+  function markSel(el) { $id('tpReaderBody').querySelectorAll('.rsent.sel').forEach(x => x.classList.remove('sel')); if (el) el.classList.add('sel'); }
+  function myReviewerSug(name) { return (S.suggestions || []).find(x => x.segment === name && x.author === frappe.session.user && x.origin === 'Reviewer'); }
+  function startEdit(el, name) {
+    const s = S.segs.find(x => x.name === name); if (!s || !el) return;
+    const shown = sugFor(name);   // start from whatever is displayed (her edit, or an imported change), else the current text
+    editEl = el; editName = name;
+    el.classList.add('editing'); el.classList.remove('has-sug');
+    el.textContent = (shown && (shown.suggested_text || '').trim()) ? shown.suggested_text : (s.final_text || s.ai_suggestion || s.draft_text || '');
+    try { el.contentEditable = 'plaintext-only'; } catch (e) { }
+    if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
+    el.focus();
+    const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  }
+  function autoSave(el, name) {                       // upsert this reviewer's suggestion from the live text
+    const s = S.segs.find(x => x.name === name); if (!s || !el) return;
+    const txt = (el.textContent || '').trim();
+    const base = (s.final_text || s.ai_suggestion || s.draft_text || '').trim();
+    el._latest = txt;                                  // remember the newest text for post-create reconciliation
+    const box = $id('tpDrawerInner') && $id('tpDrawerInner').querySelector('.tp-suggest'); if (box) box.value = el.textContent;  // mirror into the panel
+    const mine = myReviewerSug(name);
+    if (!txt || txt === base) {                        // cleared / reverted → drop the suggestion
+      if (mine) { const nm = mine.name; S.suggestions = S.suggestions.filter(x => x.name !== nm); frappe.call({ method: 'frappe.client.delete', args: { doctype: 'Translation Suggestion', name: nm } }); }
+      updateChangeInfo(); return;
+    }
+    if (mine) {
+      if (mine.suggested_text !== txt) { mine.suggested_text = txt; frappe.db.set_value('Translation Suggestion', mine.name, { suggested_text: txt }); }
+    } else if (!el._creating) {                         // create once, then reconcile to whatever she has typed since
+      el._creating = true;
+      frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: name, origin: 'Reviewer', author: frappe.session.user, suggested_text: txt, status: 'Open' } } })
+        .then(r => {
+          const d = r.message || {}; el._creating = false;
+          const latest = (el._latest || '').trim();
+          if (!latest || latest === base) { frappe.call({ method: 'frappe.client.delete', args: { doctype: 'Translation Suggestion', name: d.name } }); }
+          else { const rec = { name: d.name, segment: name, origin: 'Reviewer', author: frappe.session.user, suggested_text: latest, status: 'Open' }; S.suggestions.push(rec); if (latest !== txt) frappe.db.set_value('Translation Suggestion', d.name, { suggested_text: latest }); }
+          updateChangeInfo();
+        });
+    }
+    updateChangeInfo();
+  }
+  function commitEdit() {
+    if (!editEl) return;
+    const el = editEl, name = editName; clearTimeout(editTimer);
+    editEl = null; editName = null;
+    autoSave(el, name);                                // final save
+    el.contentEditable = 'false'; el.removeAttribute('contenteditable'); el.classList.remove('editing');
+    const s = S.segs.find(x => x.name === name);       // repaint just this sentence with its diff
+    const base = s ? (s.final_text || s.ai_suggestion || s.draft_text || '') : '';
+    const typed = (el.textContent || '').trim();
+    el.className = 'rsent st-' + (s ? s.status : 'Pending') + (typed && typed !== base.trim() ? ' has-sug' : '');
+    if (typed && typed !== base.trim()) el.innerHTML = diff(base, typed); else el.textContent = base;
+  }
+
   // ---- reading render (A4-like pages so position is easy to remember) ----
   function renderReader() {
+    if (editEl) return;   // never rebuild the DOM while a sentence is being edited
     const groups = {}, order = [], sc = sugCounts();
     S.segs.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     const open = $id('tpDrawer').classList.contains('open');
@@ -250,7 +308,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     saveSeg();
     $id('tpDrawer').classList.add('open');
     $id('tpDrawerInner').innerHTML = `<div class="tp-drawerhead"><div class="tp-seghead" style="gap:8px"><h2>§${s.seq}</h2>${pill(s.status)}</div><button class="tp-btn ghost tp-icon" data-act="closeDrawer">✕</button></div>` + editorHTML(s);
-    loadComments(s.name, $id('tpDrawerInner')); renderReader();
+    loadComments(s.name, $id('tpDrawerInner'));
+    // highlight the sentence without rebuilding the reader (so inline edits survive)
+    markSel($id('tpReaderBody').querySelector('.rsent[data-name="' + name + '"]'));
   }
 
   // ---- reading position memory (so she can find where she left off) ----
@@ -323,7 +383,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const chip = e.target.closest('.tp-chip'); if (chip) { S.filter = chip.dataset.f; renderChips(); renderList(); return; }
     const row = e.target.closest('.tp-row'); if (row) { S.cur = row.dataset.name; renderList(); renderWork(); return; }
     const rs = e.target.closest('.rsent');
-    if (rs) { openDrawer(rs.dataset.name); return; }   // click a sentence → open its side panel
+    if (rs) {
+      if (rs === editEl) return;                        // already editing this one — let the caret move
+      if (editEl) commitEdit();                         // finish the previous sentence first
+      openDrawer(rs.dataset.name);                      // open the side panel for context
+      if (!frappe.user.has_role('System Manager')) startEdit(rs, rs.dataset.name);   // reviewers edit right here
+      return;
+    }
     const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
     if (act === 'closeDrawer') { $id('tpDrawer').classList.remove('open'); renderReader(); return; }
     const s = curSeg(); if (!s) return;
@@ -416,6 +482,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpSearch').addEventListener('input', e => { S.q = e.target.value; renderList(); });
   $id('tpBook').addEventListener('change', e => { S.project = e.target.value; const p = S.projects.find(x => x.name === S.project); S.glossary = p ? (p.glossary || '') : ''; S.cur = null; $id('tpDrawer').classList.remove('open'); if (S.mode === 'reading') S.pendingRestore = true; loadSegs(); });
   { let st; $id('tpReaderPane').addEventListener('scroll', () => { clearTimeout(st); st = setTimeout(saveScroll, 250); }); }
+  // inline editing in the reading text: debounced auto-save, commit on blur
+  $id('tpReaderBody').addEventListener('input', e => { if (editEl && e.target === editEl) { clearTimeout(editTimer); editTimer = setTimeout(() => autoSave(editEl, editName), 500); } });
+  $id('tpReaderBody').addEventListener('focusout', e => { if (editEl && e.target === editEl) commitEdit(); });
   $id('tpResume').onclick = () => { let seg = null; try { seg = localStorage.getItem('tpSeg_' + S.project); } catch (e) { } if (seg && S.segs.some(x => x.name === seg)) scrollToSeg(seg); else restoreScroll(); };
   $id('tpPanel').onclick = () => { const name = (S.cur && S.segs.some(x => x.name === S.cur)) ? S.cur : (S.segs[0] && S.segs[0].name); if (name) openDrawer(name); };
   $id('tpPrevChg').onclick = () => gotoChange(-1);
@@ -427,6 +496,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpBiToggle').onclick = () => { S.bilingual = !S.bilingual; $id('tpBiToggle').textContent = S.bilingual ? 'Hide English' : 'Show English'; renderReader(); };
   document.addEventListener('keydown', e => {
     if (!page.wrapper.is(':visible')) return;
+    if (editEl) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); editEl.blur(); } else if (e.key === 'Escape') { e.preventDefault(); editEl.blur(); } return; }
     if (/input|textarea|select/i.test((document.activeElement || {}).tagName || '')) return;
     if (e.key === 'n' || e.key === 'N') { jumpNext(); return; }
     if (S.mode !== 'segments') return;
