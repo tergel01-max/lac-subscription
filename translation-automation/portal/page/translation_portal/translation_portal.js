@@ -63,12 +63,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         <section class="tp-work"><div class="tp-inner" id="tpWork"></div></section>
       </div>
       <div class="read-layout" id="tpReadLayout" style="display:none">
-        <div class="tp-readerpane"><div class="tp-readerdoc">
+        <div class="tp-readerpane" id="tpReaderPane"><div class="tp-readerdoc">
           <div class="tp-hint">
-            <span>Click any sentence to review &amp; edit.</span>
+            <span>Click any sentence to edit — your change becomes a suggestion.</span>
             <span style="color:var(--s-Suggested)"><span class="u"></span> AI suggestion waiting</span>
             <span style="color:var(--s-Pending)"><span class="u"></span> not reviewed</span>
-            <button class="tp-btn ghost" id="tpBiToggle" style="margin-left:auto;padding:4px 10px;font-size:12px">Show English</button>
+            <button class="tp-btn ghost" id="tpResume" style="margin-left:auto;padding:4px 10px;font-size:12px" title="Jump back to where you left off">⤶ Resume</button>
+            <button class="tp-btn ghost" id="tpBiToggle" style="padding:4px 10px;font-size:12px">Show English</button>
           </div>
           <div id="tpReaderBody"></div>
         </div></div>
@@ -111,9 +112,30 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   }
 
   // ---- shared editor ----
+  // NOTE: all editor elements use CLASSES (.tp-final, .tp-cmts, .tp-alt …) not
+  // IDs, because this markup renders into two panes at once (segments work-pane
+  // and reading drawer). Duplicate IDs made saves target the wrong pane/segment.
+  const enCardHTML = s => `<div class="tp-card en"><div class="lbl"><span class="name">Original · English</span></div><div class="body">${esc(s.source_text)}</div></div>`;
+  const commentsCardHTML = `<div class="tp-card comments"><div class="lbl"><span class="name">Comments</span></div><div class="body tp-cmts"><div style="color:var(--faint);font-size:13px">Loading…</div><form class="cmt-form tp-cmtform"><input class="tp-cmtinput" placeholder="Add a note for the team…"><button class="tp-btn" type="submit">Post</button></form></div></div>`;
+
   function editorHTML(s) {
-    const locked = s.status === 'Locked', finalized = s.status === 'Accepted' || s.status === 'Edited';
     const isAdmin = frappe.user.has_role('System Manager');
+    const cur = s.final_text || s.ai_suggestion || s.draft_text || '';
+    const sugs = (S.suggestions || []).filter(x => x.segment === s.name);
+
+    // ---- Reviewer (redactor) view: read + suggest inline, no popups. Their
+    // edit becomes a Translation Suggestion for the editor to accept. ----
+    if (!isAdmin) {
+      const mine = sugs.find(x => x.author === frappe.session.user && x.origin === 'Reviewer');
+      const others = sugs.filter(x => x !== mine);
+      const curCard = `<div class="tp-card"><div class="lbl"><span class="name">Current translation</span></div><div class="body">${esc(cur) || '<span class="nochange">— (no translation yet)</span>'}</div></div>`;
+      const suggestCard = `<div class="tp-card suggest"><div class="lbl"><span class="name">${mine ? '✎ Your suggested edit' : '✎ Suggest an edit'}</span><button class="tp-btn primary" data-act="savesug" style="padding:4px 12px;font-size:12px">${mine ? 'Update suggestion' : 'Save suggestion'}</button></div><div class="body" style="padding:0"><textarea class="tp-suggest" placeholder="Edit the Mongolian here — one click saves it as a suggestion for the editor.">${esc(mine ? mine.suggested_text : cur)}</textarea></div>${mine ? '<div class="notes"><span>Saved. Edit above and press Update to revise, or remove it below.</span><button class="tp-btn ghost" data-act="delsug" data-sug="' + mine.name + '" style="margin-left:auto;padding:2px 9px;font-size:12px">Remove</button></div>' : ''}</div>`;
+      const othersHtml = others.map(su => `<div class="tp-card sug"><div class="lbl"><span class="name">Also suggested · ${esc(su.origin)}${su.author ? ' · ' + esc(su.author) : ''}</span></div><div class="body"><div class="diff">${diff(cur, su.suggested_text)}</div></div>${su.note ? `<div class="notes"><span>${esc(su.note)}</span></div>` : ''}</div>`).join('');
+      return `${enCardHTML(s)}${curCard}${suggestCard}${othersHtml}${commentsCardHTML}`;
+    }
+
+    // ---- Editor / admin view: full controls ----
+    const locked = s.status === 'Locked', finalized = s.status === 'Accepted' || s.status === 'Edited';
     let ai = '';
     if (s.ai_suggestion) {
       const changed = (s.ai_suggestion || '').trim() !== (s.draft_text || '').trim();
@@ -122,12 +144,12 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       if (!locked) {
         inner += `<div class="cta"><button class="tp-btn primary" data-act="acceptAI">✔ Accept</button>`;
         if (s.ai_alternative) inner += `<button class="alt-toggle" data-act="toggleAlt">▾ Alternative</button>`;
-        if (isAdmin) inner += `<button class="tp-btn" data-act="addterm">＋ Term</button><button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button>`;
+        inner += `<button class="tp-btn" data-act="addterm">＋ Term</button><button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button>`;
         inner += `</div>`;
-        if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
+        if (s.ai_alternative) inner += `<div class="alt tp-alt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
       }
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div>${inner}</div>`;
-    } else if (isAdmin) {
+    } else {
       const gen = locked ? '' : `<div class="cta"><button class="tp-btn" data-act="regen">✨ Generate suggestion</button></div>`;
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div><div class="body"><span class="nochange">Not generated yet.</span></div>${gen}</div>`;
     }
@@ -138,16 +160,15 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
     const draftBtn = locked ? '' : '<button class="tp-btn ghost" data-act="useDraft" style="padding:3px 9px;font-size:12px">Keep draft</button>';
     const saveBtn = locked ? '' : '<button class="tp-btn primary" data-act="saveFinal" style="padding:4px 12px;font-size:12px">Save</button>';
-    const sugs = (S.suggestions || []).filter(x => x.segment === s.name);
     const sugHtml = sugs.map(su => `<div class="tp-card sug"><div class="lbl"><span class="name">Suggested change · ${esc(su.origin)}${su.author ? ' · ' + esc(su.author) : ''}</span></div><div class="body"><div class="diff">${diff(s.final_text || s.draft_text || '', su.suggested_text)}</div></div>${su.note ? `<div class="notes"><span>${esc(su.note)}</span></div>` : ''}<div class="cta"><button class="tp-btn primary" data-act="acceptsug" data-sug="${su.name}">✔ Accept change</button><button class="tp-btn" data-act="rejectsug" data-sug="${su.name}">Reject</button></div></div>`).join('');
     return `
       ${doneBar}
-      <div class="tp-card en"><div class="lbl"><span class="name">Original · English</span></div><div class="body">${esc(s.source_text)}</div></div>
+      ${enCardHTML(s)}
       <div class="tp-card"><div class="lbl"><span class="name">Translator draft</span>${draftBtn}</div><div class="body">${esc(s.draft_text)}</div></div>
       ${ai}
       ${sugHtml}
-      <div class="tp-card final"><div class="lbl"><span class="name">Final</span><span style="display:flex;gap:6px">${saveBtn}<button class="tp-btn" data-act="propose" style="padding:4px 10px;font-size:12px">✎ Propose</button></span></div><div class="body"><textarea id="tpFinal" ${locked ? 'readonly' : ''} placeholder="Accept above or type the final Mongolian…">${esc(s.final_text)}</textarea></div></div>
-      <div class="tp-card comments"><div class="lbl"><span class="name">Comments</span></div><div class="body" id="tpCmts"><div style="color:var(--faint);font-size:13px">Loading…</div><form class="cmt-form" id="tpCmtForm"><input id="tpCmtInput" placeholder="Add a note for the team…"><button class="tp-btn" type="submit">Post</button></form></div></div>`;
+      <div class="tp-card final"><div class="lbl"><span class="name">Final</span><span style="display:flex;gap:6px">${saveBtn}<button class="tp-btn" data-act="propose" style="padding:4px 10px;font-size:12px">✎ Propose</button></span></div><div class="body"><textarea class="tp-final" ${locked ? 'readonly' : ''} placeholder="Accept above or type the final Mongolian…">${esc(s.final_text)}</textarea></div></div>
+      ${commentsCardHTML}`;
   }
 
   // ---- segments render ----
@@ -170,50 +191,69 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const s = curSeg(); const w = $id('tpWork');
     if (!s) { w.innerHTML = '<div style="color:var(--faint);padding:40px 0">Select a segment.</div>'; return; }
     w.innerHTML = `<div class="tp-seghead"><h2>${esc(s.chapter || 'Book')} · Segment §${s.seq}</h2>${pill(s.status)}</div>` + editorHTML(s);
-    loadComments(s.name);
+    loadComments(s.name, $id('tpWork'));
   }
 
-  // ---- reading render ----
+  // ---- reading render (A4-like pages so position is easy to remember) ----
   function renderReader() {
     const groups = {}, order = [], sc = sugCounts();
     S.segs.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     const open = $id('tpDrawer').classList.contains('open');
-    $id('tpReaderBody').innerHTML = order.map(ch => {
-      let block;
-      if (S.bilingual) {
-        block = groups[ch].map(s => {
-          const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
-          const sel = (open && s.name === S.cur) ? ' sel' : '';
-          return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}" data-name="${s.name}">${esc(txt)}</div></div>`;
-        }).join('');
-      } else {
-        block = '<p>' + groups[ch].map(s => {
-          const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
-          const sel = (open && s.name === S.cur) ? ' sel' : '';
-          return `<span class="rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}" data-name="${s.name}">${esc(txt)}</span>`;
-        }).join(' ') + '</p>';
-      }
-      return `<div class="chap-title">${esc(ch)}</div>${block}`;
+    // Flow the whole book into fixed-size "pages" (~one A4 of body text) so the
+    // page number is a stable landmark she can come back to.
+    const PAGE = 1700, pages = []; let cur = [], n = 0;
+    const flush = () => { if (cur.length) { pages.push(cur); cur = []; n = 0; } };
+    order.forEach(ch => {
+      if (n > PAGE * 0.55) flush();
+      cur.push({ t: 'chap', ch }); n += 160;
+      groups[ch].forEach(s => {
+        const txt = s.final_text || s.ai_suggestion || s.draft_text || '';
+        cur.push({ t: 'sent', s, txt });
+        n += (txt.length || 1) + (S.bilingual ? (s.source_text || '').length + 30 : 1);
+        if (n >= PAGE) flush();
+      });
+    });
+    flush();
+    const total = pages.length || 1;
+    const html = pages.map((pg, pi) => {
+      const inner = pg.map(tok => {
+        if (tok.t === 'chap') return `<div class="chap-title">${esc(tok.ch)}</div>`;
+        const s = tok.s, sel = (open && s.name === S.cur) ? ' sel' : '';
+        const cls = `rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}`;
+        if (S.bilingual) return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="${cls}" data-name="${s.name}">${esc(tok.txt)}</div></div>`;
+        return `<span class="${cls}" data-name="${s.name}">${esc(tok.txt)} </span>`;
+      }).join('');
+      return `<div class="tp-page" data-page="${pi + 1}"><div class="tp-pagebody${S.bilingual ? ' bi' : ''}">${inner}</div><div class="tp-pagenum">— ${pi + 1} / ${total} —</div></div>`;
     }).join('') || '<div style="color:var(--faint)">No segments.</div>';
+    const pane = $id('tpReaderPane'), keep = pane ? pane.scrollTop : 0;
+    $id('tpReaderBody').innerHTML = html;
+    if (pane) { if (S.pendingRestore) { restoreScroll(); S.pendingRestore = false; } else pane.scrollTop = keep; }
   }
   function openDrawer(name) {
     S.cur = name; const s = curSeg(); if (!s) return;
+    saveSeg();
     $id('tpDrawer').classList.add('open');
     $id('tpDrawerInner').innerHTML = `<div class="tp-drawerhead"><div class="tp-seghead" style="gap:8px"><h2>§${s.seq}</h2>${pill(s.status)}</div><button class="tp-btn ghost tp-icon" data-act="closeDrawer">✕</button></div>` + editorHTML(s);
-    loadComments(s.name); renderReader();
+    loadComments(s.name, $id('tpDrawerInner')); renderReader();
   }
+
+  // ---- reading position memory (so she can find where she left off) ----
+  function saveScroll() { const p = $id('tpReaderPane'); if (p && S.project) { try { localStorage.setItem('tpScroll_' + S.project, String(Math.round(p.scrollTop))); } catch (e) { } } }
+  function saveSeg() { if (S.project && S.cur) { try { localStorage.setItem('tpSeg_' + S.project, S.cur); } catch (e) { } } }
+  function restoreScroll() { const p = $id('tpReaderPane'); if (!p || !S.project) return; let v = 0; try { v = parseInt(localStorage.getItem('tpScroll_' + S.project) || '0', 10) || 0; } catch (e) { } p.scrollTop = v; }
+  function scrollToSeg(name) { const el = $id('tpReaderBody').querySelector('.rsent[data-name="' + name + '"]'); if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('pulse'); setTimeout(() => el.classList.remove('pulse'), 1700); } }
 
   function renderProgress() { const done = S.segs.filter(s => DONE(s.status)).length; const pct = S.segs.length ? Math.round(done * 100 / S.segs.length) : 0; $id('tpProgLabel').textContent = `${done} / ${S.segs.length} · ${pct}%`; $id('tpProgFill').style.width = pct + '%'; }
   function renderAll() { renderProgress(); if (S.mode === 'segments') { renderChips(); renderList(); renderWork(); } else { renderReader(); if ($id('tpDrawer').classList.contains('open')) openDrawer(S.cur); } }
-  function setMode(m) { S.mode = m; $id('tpMSeg').setAttribute('aria-pressed', m === 'segments'); $id('tpMRead').setAttribute('aria-pressed', m === 'reading'); $id('tpSegLayout').style.display = m === 'segments' ? 'grid' : 'none'; $id('tpReadLayout').style.display = m === 'reading' ? 'flex' : 'none'; if (m === 'reading') $id('tpDrawer').classList.remove('open'); renderAll(); }
+  function setMode(m) { S.mode = m; $id('tpMSeg').setAttribute('aria-pressed', m === 'segments'); $id('tpMRead').setAttribute('aria-pressed', m === 'reading'); $id('tpSegLayout').style.display = m === 'segments' ? 'grid' : 'none'; $id('tpReadLayout').style.display = m === 'reading' ? 'flex' : 'none'; if (m === 'reading') { $id('tpDrawer').classList.remove('open'); S.pendingRestore = true; } renderAll(); }
   function setCur(name) { S.cur = name; if (S.mode === 'reading') openDrawer(name); else { renderList(); renderWork(); root.querySelector('.tp-row.active')?.scrollIntoView({ block: 'nearest' }); } }
   function jumpNext() { const nx = S.segs.find(s => s.status === 'Pending' || s.status === 'Suggested'); if (!nx) { frappe.show_alert({ message: 'Nothing left to review 🎉', indicator: 'green' }); return; } setCur(nx.name); }
 
   // ---- comments ----
-  function loadComments(name) {
+  function loadComments(name, scope) {
     frappe.db.get_list('Comment', { filters: { reference_doctype: 'Translation Segment', reference_name: name, comment_type: 'Comment' }, fields: ['content', 'comment_by', 'creation'], order_by: 'creation asc', limit: 0 })
       .then(rows => {
-        const box = $id('tpCmts'); if (!box) return; const form = box.querySelector('#tpCmtForm');
+        const box = (scope || bodyEl).querySelector('.tp-cmts'); if (!box) return; const form = box.querySelector('.tp-cmtform');
         box.innerHTML = ((rows || []).map(c => `<div class="cmt"><div class="avatar">${esc((c.comment_by || '?')[0].toUpperCase())}</div><div><div class="who"><b>${esc(c.comment_by || '')}</b> · ${frappe.datetime.comment_when ? frappe.datetime.comment_when(c.creation) : ''}</div><div class="txt">${esc((c.content || '').replace(/<[^>]+>/g, ''))}</div></div></div>`).join('') || '<div style="color:var(--faint);font-size:13px">No comments yet.</div>');
         if (form) box.appendChild(form);
       });
@@ -263,7 +303,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     if (act === 'acceptAI') accept(s, s.ai_suggestion);
     else if (act === 'useAlt') accept(s, s.ai_alternative);
     else if (act === 'useDraft') accept(s, s.draft_text);
-    else if (act === 'toggleAlt') $id('tpAlt')?.classList.toggle('open');
+    else if (act === 'toggleAlt') e.target.closest('.tp-card.ai')?.querySelector('.tp-alt')?.classList.toggle('open');
     else if (act === 'undo') { save(s, { status: s.ai_suggestion ? 'Suggested' : 'Pending', final_text: '' }); frappe.show_alert({ message: 'Reverted §' + s.seq, indicator: 'orange' }); }
     else if (act === 'lock') { save(s, { status: 'Locked' }); frappe.show_alert({ message: 'Locked §' + s.seq, indicator: 'blue' }); }
     else if (act === 'unlock') { save(s, { status: (s.final_text || '').trim() ? 'Edited' : 'Suggested' }); frappe.show_alert({ message: 'Unlocked §' + s.seq, indicator: 'orange' }); }
@@ -300,24 +340,42 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       renderAll(); frappe.show_alert({ message: 'Change rejected', indicator: 'orange' });
     }
     else if (act === 'propose') {
-      frappe.prompt([
-        { fieldname: 'text', fieldtype: 'Small Text', label: 'Proposed Mongolian', reqd: 1, default: (s.final_text || s.ai_suggestion || s.draft_text || '') },
-        { fieldname: 'note', fieldtype: 'Data', label: 'Note (optional)' },
-      ], v => {
-        frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: s.name, origin: 'Reviewer', author: frappe.session.user, suggested_text: v.text, note: v.note || '', status: 'Open' } } })
-          .then(() => { loadSuggestions().then(renderAll); frappe.show_alert({ message: 'Proposed a change to §' + s.seq, indicator: 'blue' }); });
-      }, 'Propose a change', 'Submit');
+      // Inline (no popup): turn the Final textarea's current text into a suggestion.
+      const ed = e.target.closest('.tp-drawerinner, .tp-inner');
+      const txt = (ed?.querySelector('.tp-final')?.value || '').trim();
+      if (!txt) { frappe.show_alert({ message: 'Type the Final text first, then Propose.', indicator: 'orange' }); return; }
+      frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: s.name, origin: 'Reviewer', author: frappe.session.user, suggested_text: txt, status: 'Open' } } })
+        .then(() => { loadSuggestions().then(renderAll); frappe.show_alert({ message: 'Proposed a change to §' + s.seq, indicator: 'blue' }); });
     }
-    else if (act === 'saveFinal') { const v = $id('tpFinal').value; const st = (v.trim() === (s.ai_suggestion || '').trim() || v.trim() === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited'; save(s, { final_text: v, status: st }); frappe.show_alert({ message: 'Saved §' + s.seq, indicator: 'green' }); }
+    else if (act === 'savesug') {
+      // Reviewer inline edit → upsert their suggestion (one per segment), no popup.
+      const ta = e.target.closest('.tp-card.suggest')?.querySelector('.tp-suggest');
+      const txt = (ta?.value || '').trim();
+      const base = (s.final_text || s.ai_suggestion || s.draft_text || '').trim();
+      if (!txt) { frappe.show_alert({ message: 'Type your edit first.', indicator: 'orange' }); return; }
+      if (txt === base) { frappe.show_alert({ message: 'That is the same as the current text — no change to suggest.', indicator: 'orange' }); return; }
+      const mine = (S.suggestions || []).find(x => x.segment === s.name && x.author === frappe.session.user && x.origin === 'Reviewer');
+      const done = () => { loadSuggestions().then(renderAll); frappe.show_alert({ message: 'Suggestion saved for §' + s.seq, indicator: 'green' }); };
+      if (mine) frappe.db.set_value('Translation Suggestion', mine.name, { suggested_text: txt }).then(done).catch(e2 => frappe.msgprint('Save failed: ' + (e2.message || e2)));
+      else frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: s.name, origin: 'Reviewer', author: frappe.session.user, suggested_text: txt, status: 'Open' } } }).then(done).catch(e2 => frappe.msgprint('Save failed: ' + (e2.message || e2)));
+    }
+    else if (act === 'delsug') {
+      const sn = e.target.closest('[data-act]').dataset.sug;
+      S.suggestions = S.suggestions.filter(x => x.name !== sn);
+      frappe.call({ method: 'frappe.client.delete', args: { doctype: 'Translation Suggestion', name: sn } }).then(() => { loadSuggestions().then(renderAll); frappe.show_alert({ message: 'Suggestion removed', indicator: 'orange' }); });
+    }
+    else if (act === 'saveFinal') { const ed = e.target.closest('.tp-drawerinner, .tp-inner'); const v = ed.querySelector('.tp-final').value; const st = (v.trim() === (s.ai_suggestion || '').trim() || v.trim() === (s.draft_text || '').trim()) ? 'Accepted' : 'Edited'; save(s, { final_text: v, status: st }); frappe.show_alert({ message: 'Saved §' + s.seq, indicator: 'green' }); }
   });
   root.addEventListener('submit', e => {
-    if (e.target.id === 'tpCmtForm') {
-      e.preventDefault(); const inp = $id('tpCmtInput'); const val = inp.value.trim(); if (!val) return; const name = S.cur;
-      frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Comment', comment_type: 'Comment', reference_doctype: 'Translation Segment', reference_name: name, content: val } } }).then(() => { inp.value = ''; loadComments(name); });
-    }
+    const form = e.target.closest('.tp-cmtform'); if (!form) return;
+    e.preventDefault(); const inp = form.querySelector('.tp-cmtinput'); const val = (inp.value || '').trim(); if (!val) return;
+    const name = S.cur, scope = form.closest('.tp-drawerinner, .tp-inner');
+    frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Comment', comment_type: 'Comment', reference_doctype: 'Translation Segment', reference_name: name, content: val } } }).then(() => { inp.value = ''; loadComments(name, scope); });
   });
   $id('tpSearch').addEventListener('input', e => { S.q = e.target.value; renderList(); });
-  $id('tpBook').addEventListener('change', e => { S.project = e.target.value; const p = S.projects.find(x => x.name === S.project); S.glossary = p ? (p.glossary || '') : ''; S.cur = null; $id('tpDrawer').classList.remove('open'); loadSegs(); });
+  $id('tpBook').addEventListener('change', e => { S.project = e.target.value; const p = S.projects.find(x => x.name === S.project); S.glossary = p ? (p.glossary || '') : ''; S.cur = null; $id('tpDrawer').classList.remove('open'); if (S.mode === 'reading') S.pendingRestore = true; loadSegs(); });
+  { let st; $id('tpReaderPane').addEventListener('scroll', () => { clearTimeout(st); st = setTimeout(saveScroll, 250); }); }
+  $id('tpResume').onclick = () => { let seg = null; try { seg = localStorage.getItem('tpSeg_' + S.project); } catch (e) { } if (seg && S.segs.some(x => x.name === seg)) scrollToSeg(seg); else restoreScroll(); };
   $id('tpMSeg').onclick = () => setMode('segments');
   $id('tpMRead').onclick = () => setMode('reading');
   $id('tpNext').onclick = jumpNext;
@@ -331,7 +389,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     if (e.key === 'j' || e.key === 'J') move(1);
     else if (e.key === 'k' || e.key === 'K') move(-1);
     else if (e.key === 'a' || e.key === 'A') { const s = curSeg(); if (s && s.ai_suggestion && s.status !== 'Locked') accept(s, s.ai_suggestion); }
-    else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); $id('tpFinal')?.focus(); }
+    else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); $id('tpWork')?.querySelector('.tp-final, .tp-suggest')?.focus(); }
   });
 
   // ---- overlays ----
@@ -530,5 +588,6 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   });
   $id('tpTheme').onclick = () => root.classList.toggle('tp-dark');
 
-  loadProjects();
+  // Redactors live in the Reading view — open there and jump to where they left off.
+  loadProjects().then(() => { if (!frappe.user.has_role('System Manager')) { setMode('reading'); } });
 };
