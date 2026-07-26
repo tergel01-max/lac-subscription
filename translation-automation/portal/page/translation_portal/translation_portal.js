@@ -65,10 +65,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       <div class="read-layout" id="tpReadLayout" style="display:none">
         <div class="tp-readerpane" id="tpReaderPane"><div class="tp-readerdoc">
           <div class="tp-hint">
-            <span>Click any sentence to edit — your change becomes a suggestion.</span>
-            <span style="color:var(--s-Suggested)"><span class="u"></span> AI suggestion waiting</span>
-            <span style="color:var(--s-Pending)"><span class="u"></span> not reviewed</span>
+            <span>Click a sentence to edit it right here — your change saves as a suggestion (shown <ins>green</ins>/<del>red</del>). Enter = save, Esc = cancel.</span>
             <button class="tp-btn ghost" id="tpResume" style="margin-left:auto;padding:4px 10px;font-size:12px" title="Jump back to where you left off">⤶ Resume</button>
+            <button class="tp-btn ghost" id="tpPanel" style="padding:4px 10px;font-size:12px" title="Open the side panel (English, comments, suggestions) for the current sentence">☰ Panel</button>
             <button class="tp-btn ghost" id="tpBiToggle" style="padding:4px 10px;font-size:12px">Show English</button>
           </div>
           <div id="tpReaderBody"></div>
@@ -194,8 +193,64 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     loadComments(s.name, $id('tpWork'));
   }
 
+  // ---- inline suggesting in the reading text (Google-Docs style) ----
+  let editingEl = null, editingName = null, editingOrig = '';
+  // pick the suggestion to show inline for a segment (prefer the viewer's own)
+  function sugFor(name) { const arr = (S.suggestions || []).filter(x => x.segment === name); return arr.find(x => x.author === frappe.session.user) || arr[0] || null; }
+  // paint one sentence element in place (plain text, or red/green diff if it
+  // carries an open suggestion) — avoids a full re-render that would lose focus/scroll
+  function paintSentence(el, name) {
+    if (!el) return; const s = S.segs.find(x => x.name === name); if (!s) return;
+    const eff = s.final_text || s.ai_suggestion || s.draft_text || '';
+    const sug = sugFor(name);
+    el.className = 'rsent st-' + s.status + (sug ? ' has-sug' : '');
+    if (sug && (sug.suggested_text || '').trim() && (sug.suggested_text || '').trim() !== eff.trim()) el.innerHTML = diff(eff, sug.suggested_text);
+    else el.textContent = eff;
+  }
+  function startInline(el, name) {
+    if (editingEl === el) return;
+    if (editingEl) commitInline();
+    const s = S.segs.find(x => x.name === name); if (!s) return;
+    S.cur = name; saveSeg();
+    const mine = (S.suggestions || []).find(x => x.segment === name && x.author === frappe.session.user && x.origin === 'Reviewer');
+    editingOrig = mine ? mine.suggested_text : (s.final_text || s.ai_suggestion || s.draft_text || '');
+    editingEl = el; editingName = name;
+    el.classList.add('editing'); el.classList.remove('has-sug');
+    el.textContent = editingOrig;                 // edit clean text, not the diff markup
+    try { el.contentEditable = 'plaintext-only'; } catch (e) { }   // Firefox rejects this value
+    if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true';
+    el.focus();
+    const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  }
+  function endEditDom(el) { el.contentEditable = 'false'; el.removeAttribute('contenteditable'); el.classList.remove('editing'); }
+  function cancelInline() { if (!editingEl) return; const el = editingEl, name = editingName; editingEl = editingName = null; endEditDom(el); paintSentence(el, name); }
+  function commitInline() {
+    if (!editingEl) return;
+    const el = editingEl, name = editingName, orig = (editingOrig || '').trim();
+    editingEl = editingName = null; endEditDom(el);
+    const s = S.segs.find(x => x.name === name); if (!s) return;
+    const txt = (el.textContent || '').trim();
+    const base = (s.final_text || s.ai_suggestion || s.draft_text || '').trim();
+    const mine = (S.suggestions || []).find(x => x.segment === name && x.author === frappe.session.user && x.origin === 'Reviewer');
+    if (!txt || txt === orig) { paintSentence(el, name); return; }   // no change typed
+    if (txt === base) {   // reverted to the original → drop her suggestion if any
+      if (mine) { S.suggestions = S.suggestions.filter(x => x.name !== mine.name); frappe.call({ method: 'frappe.client.delete', args: { doctype: 'Translation Suggestion', name: mine.name } }); frappe.show_alert({ message: 'Reverted §' + s.seq, indicator: 'orange' }); }
+      paintSentence(el, name); return;
+    }
+    if (mine) {
+      mine.suggested_text = txt; paintSentence(el, name);
+      frappe.db.set_value('Translation Suggestion', mine.name, { suggested_text: txt });
+      frappe.show_alert({ message: 'Suggestion updated · §' + s.seq, indicator: 'green' });
+    } else {
+      frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: name, origin: 'Reviewer', author: frappe.session.user, suggested_text: txt, status: 'Open' } } })
+        .then(r => { const d = r.message || {}; S.suggestions.push({ name: d.name, segment: name, origin: 'Reviewer', author: frappe.session.user, suggested_text: txt, status: 'Open' }); paintSentence(el, name); frappe.show_alert({ message: 'Suggestion saved · §' + s.seq, indicator: 'green' }); });
+    }
+  }
+
   // ---- reading render (A4-like pages so position is easy to remember) ----
   function renderReader() {
+    if (editingEl) return;   // don't blow away an active inline edit
     const groups = {}, order = [], sc = sugCounts();
     S.segs.forEach(s => { const ch = s.chapter || 'Book'; if (!groups[ch]) { groups[ch] = []; order.push(ch); } groups[ch].push(s); });
     const open = $id('tpDrawer').classList.contains('open');
@@ -220,8 +275,11 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         if (tok.t === 'chap') return `<div class="chap-title">${esc(tok.ch)}</div>`;
         const s = tok.s, sel = (open && s.name === S.cur) ? ' sel' : '';
         const cls = `rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}`;
-        if (S.bilingual) return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="${cls}" data-name="${s.name}">${esc(tok.txt)}</div></div>`;
-        return `<span class="${cls}" data-name="${s.name}">${esc(tok.txt)} </span>`;
+        // show a pending suggestion inline as a red/green tracked change
+        const sug = sugFor(s.name);
+        const content = (sug && (sug.suggested_text || '').trim() && (sug.suggested_text || '').trim() !== (tok.txt || '').trim()) ? diff(tok.txt, sug.suggested_text) : esc(tok.txt);
+        if (S.bilingual) return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="${cls}" data-name="${s.name}">${content}</div></div>`;
+        return `<span class="${cls}" data-name="${s.name}">${content} </span>`;
       }).join('');
       return `<div class="tp-page" data-page="${pi + 1}"><div class="tp-pagebody${S.bilingual ? ' bi' : ''}">${inner}</div><div class="tp-pagenum">— ${pi + 1} / ${total} —</div></div>`;
     }).join('') || '<div style="color:var(--faint)">No segments.</div>';
@@ -296,7 +354,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   root.addEventListener('click', e => {
     const chip = e.target.closest('.tp-chip'); if (chip) { S.filter = chip.dataset.f; renderChips(); renderList(); return; }
     const row = e.target.closest('.tp-row'); if (row) { S.cur = row.dataset.name; renderList(); renderWork(); return; }
-    const rs = e.target.closest('.rsent'); if (rs) { openDrawer(rs.dataset.name); return; }
+    const rs = e.target.closest('.rsent');
+    if (rs) {
+      if (rs === editingEl) return;                                  // clicking inside the active editor: let the caret move
+      if (frappe.user.has_role('System Manager')) openDrawer(rs.dataset.name);   // editors use the review drawer
+      else startInline(rs, rs.dataset.name);                         // reviewers edit right in the text
+      return;
+    }
     const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
     if (act === 'closeDrawer') { $id('tpDrawer').classList.remove('open'); renderReader(); return; }
     const s = curSeg(); if (!s) return;
@@ -376,13 +440,17 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   $id('tpBook').addEventListener('change', e => { S.project = e.target.value; const p = S.projects.find(x => x.name === S.project); S.glossary = p ? (p.glossary || '') : ''; S.cur = null; $id('tpDrawer').classList.remove('open'); if (S.mode === 'reading') S.pendingRestore = true; loadSegs(); });
   { let st; $id('tpReaderPane').addEventListener('scroll', () => { clearTimeout(st); st = setTimeout(saveScroll, 250); }); }
   $id('tpResume').onclick = () => { let seg = null; try { seg = localStorage.getItem('tpSeg_' + S.project); } catch (e) { } if (seg && S.segs.some(x => x.name === seg)) scrollToSeg(seg); else restoreScroll(); };
+  $id('tpPanel').onclick = () => { if (editingEl) commitInline(); const name = (S.cur && S.segs.some(x => x.name === S.cur)) ? S.cur : (S.segs[0] && S.segs[0].name); if (name) openDrawer(name); };
   $id('tpMSeg').onclick = () => setMode('segments');
   $id('tpMRead').onclick = () => setMode('reading');
   $id('tpNext').onclick = jumpNext;
   $id('tpQA').onclick = openQA;
   $id('tpBiToggle').onclick = () => { S.bilingual = !S.bilingual; $id('tpBiToggle').textContent = S.bilingual ? 'Hide English' : 'Show English'; renderReader(); };
+  // commit an inline edit when focus leaves the sentence (click elsewhere, scroll away)
+  $id('tpReaderBody').addEventListener('focusout', e => { if (editingEl && e.target === editingEl) commitInline(); });
   document.addEventListener('keydown', e => {
     if (!page.wrapper.is(':visible')) return;
+    if (editingEl) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitInline(); } else if (e.key === 'Escape') { e.preventDefault(); cancelInline(); } return; }
     if (/input|textarea|select/i.test((document.activeElement || {}).tagName || '')) return;
     if (e.key === 'n' || e.key === 'N') { jumpNext(); return; }
     if (S.mode !== 'segments') return;
