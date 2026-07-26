@@ -391,6 +391,72 @@ def ai_suggest_one(segment, hint=""):
     return {"mn": r.get("mn", ""), "alt": r.get("alt", ""), "notes": r.get("notes", "")}
 
 
+@frappe.whitelist()
+def term_find(project, find_text):
+    """Preview: how many segments' current Mongolian contains find_text.
+    Deterministic find (no AI) — the basis of the Find & Replace tool."""
+    frappe.only_for(["System Manager", "Translation Reviewer"])
+    find_text = (find_text or "").strip()
+    if not find_text:
+        return {"matches": 0, "seqs": []}
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["seq", "final_text", "ai_suggestion", "draft_text", "status"],
+                          order_by="seq asc", limit_page_length=0)
+    seqs = []
+    for s in segs:
+        if s.status == "Locked":
+            continue
+        cur = s.final_text or s.ai_suggestion or s.draft_text or ""
+        if find_text in cur:
+            seqs.append(s.seq)
+    return {"matches": len(seqs), "seqs": seqs[:50]}
+
+
+@frappe.whitelist()
+def term_replace(project, find_text, replace_text, mode="suggest"):
+    """Replace find_text -> replace_text in the Mongolian of every (non-locked)
+    matching segment.
+      mode='suggest' (default) -> create reviewable red/green suggestions
+                                   (safe; reviewers may use this)
+      mode='apply'   -> write final_text directly (System Manager only)
+    Returns the number of segments changed."""
+    frappe.only_for(["System Manager", "Translation Reviewer"])
+    find_text = (find_text or "").strip()
+    replace_text = (replace_text or "").strip()
+    if not find_text or not replace_text:
+        frappe.throw("Enter both the text to find and its replacement.")
+    if mode == "apply":
+        frappe.only_for("System Manager")   # direct edits are editor-only
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "status", "final_text", "ai_suggestion", "draft_text"],
+                          order_by="seq asc", limit_page_length=0)
+    author = frappe.session.user
+    note = "🔤 %s → %s" % (find_text, replace_text)
+    changed = 0
+    for s in segs:
+        if s.status == "Locked":
+            continue
+        cur = s.final_text or s.ai_suggestion or s.draft_text or ""
+        if find_text not in cur:
+            continue
+        new = cur.replace(find_text, replace_text)
+        if new == cur:
+            continue
+        if mode == "apply":
+            frappe.db.set_value("Translation Segment", s.name, {"final_text": new, "status": "Edited"})
+        else:
+            # skip if an identical open suggestion already exists (idempotent re-runs)
+            if frappe.db.exists("Translation Suggestion",
+                                {"project": project, "segment": s.name, "status": "Open", "suggested_text": new}):
+                continue
+            frappe.get_doc({"doctype": "Translation Suggestion", "project": project,
+                            "segment": s.name, "origin": "Reviewer", "author": author,
+                            "suggested_text": new, "note": note, "status": "Open"}).insert(ignore_permissions=True)
+        changed += 1
+    frappe.db.commit()
+    return {"changed": changed, "mode": mode, "find": find_text, "replace": replace_text}
+
+
 def _norm_en(t):
     return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
 

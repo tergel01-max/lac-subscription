@@ -129,6 +129,11 @@
 .tp-terms{width:100%;border-collapse:collapse;font-size:13.5px}
 .tp-terms th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8a9a98;padding:6px 8px;border-bottom:1px solid rgba(128,128,128,.25)}
 .tp-terms td{padding:7px 8px;border-bottom:1px solid rgba(128,128,128,.15);vertical-align:middle}
+.tp-fr{margin-top:22px;padding-top:16px;border-top:1px solid rgba(128,128,128,.25)}
+.tp-frhead{font-weight:700;font-size:13px;margin-bottom:10px}
+.tp-frhead span{color:#8a9a98;font-weight:400}
+.tp-fr ins{background:#d3f1de;color:#136137;text-decoration:none;border-radius:3px;padding:0 3px}
+.tp-fr del{background:#fbdede;color:#9a2b2b;border-radius:3px;padding:0 3px}
 .tp-termadd{display:flex;gap:8px;margin-top:14px}
 .tp-termadd input{flex:1;border:1px solid rgba(128,128,128,.3);background:transparent;color:inherit;border-radius:9px;padding:8px 11px;font-size:13.5px;font-family:system-ui}
 .tp .tp-seghead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}

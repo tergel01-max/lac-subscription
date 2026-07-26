@@ -569,39 +569,55 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
 
   function openTerms() {
     const isAdmin = frappe.user.has_role('System Manager');
+    const ea = s => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const rows = (S.terms || []).map(t => {
       const uses = S.segs.filter(s => (s.source_text || '').toLowerCase().includes((t.source_term || '').toLowerCase())).length;
-      const off = S.segs.filter(s => { const eff = s.final_text || s.ai_suggestion || s.draft_text || ''; return (s.source_text || '').toLowerCase().includes((t.source_term || '').toLowerCase()) && eff && !eff.toLowerCase().includes((t.target_term || '').toLowerCase()); }).length;
-      const applyCell = isAdmin ? `<button class="tp-btn" data-tapply="${esc(t.source_term)}|||${esc(t.target_term)}" style="padding:3px 9px;font-size:12px">Apply everywhere</button>` : '';
-      return `<tr><td><b>${esc(t.source_term)}</b></td><td>${esc(t.target_term)}</td><td style="text-align:center">${uses}</td><td style="text-align:center;color:${off ? 'var(--s-Suggested)' : 'var(--s-Accepted)'};font-weight:700">${off}</td><td>${applyCell}</td></tr>`;
-    }).join('') || '<tr><td colspan="5" style="color:var(--faint);padding:14px">No terms yet — add one below.</td></tr>';
-    const applyBtn = isAdmin ? '<button class="tp-btn" id="tt_apply">Add + apply</button>' : '';
-    const note = isAdmin
-      ? '“Uses” = segments containing the English term. “Off” = those not yet using the approved translation. “Apply everywhere” re-generates the off ones (locked segments are left alone).'
-      : '“Uses” = segments containing the English term. “Off” = those not yet using the approved translation. Add approved terms here to keep terminology consistent.';
+      return `<tr><td><b>${esc(t.source_term)}</b></td><td>${esc(t.target_term)}</td><td style="text-align:center">${uses}</td><td><button class="tp-btn" data-fr="${ea(t.source_term)}|||${ea(t.target_term)}" style="padding:3px 9px;font-size:12px">Fix in text →</button></td></tr>`;
+    }).join('') || '<tr><td colspan="4" style="color:var(--faint);padding:14px">No terms yet — add one below.</td></tr>';
     const body = `<div style="font-family:system-ui">
-      <table class="tp-terms"><thead><tr><th>Source (EN)</th><th>Approved (MN)</th><th>Uses</th><th>Off</th><th></th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="tp-termadd"><input id="tt_s" placeholder="English term"><input id="tt_t" placeholder="Approved Mongolian"><button class="tp-btn primary" id="tt_add">Add</button>${applyBtn}</div>
-      <div style="font-size:12px;color:var(--faint);margin-top:8px">${note}</div>
+      <table class="tp-terms"><thead><tr><th>Source (EN)</th><th>Approved (MN)</th><th>Uses</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="tp-termadd"><input id="tt_s" placeholder="English term"><input id="tt_t" placeholder="Approved Mongolian"><button class="tp-btn primary" id="tt_add">Add term</button></div>
+      <div style="font-size:12px;color:var(--faint);margin-top:8px">The termbase keeps future AI translations consistent. To fix wording that is <b>already</b> in the book, use Find &amp; Replace below (“Fix in text →” fills it in for you).</div>
+      <div class="tp-fr">
+        <div class="tp-frhead">🔤 Find &amp; Replace in the book <span>— fix a spelling/name everywhere (recommended for names &amp; terms; instant, no AI)</span></div>
+        <div class="tp-termadd"><input id="fr_find" placeholder="Find (exact text in the translation)"><input id="fr_rep" placeholder="Replace with"><button class="tp-btn" id="fr_findbtn">🔍 Find</button></div>
+        <div id="fr_count" style="font-size:12.5px;color:var(--muted);margin:9px 2px;min-height:16px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="tp-btn primary" id="fr_suggest">Replace as suggestions</button>
+          ${isAdmin ? '<button class="tp-btn" id="fr_apply">Replace directly</button>' : ''}
+        </div>
+        <div style="font-size:12px;color:var(--faint);margin-top:8px">“As suggestions” adds reviewable <ins>green</ins>/<del>red</del> changes for the editor to accept.${isAdmin ? ' “Replace directly” edits the text immediately.' : ''} Locked sentences are never touched. Case-sensitive, exact match.</div>
+      </div>
     </div>`;
-    overlay('Termbase — ' + (S.terms || []).length + ' term(s)', body);
+    overlay('Termbase & Find/Replace — ' + (S.terms || []).length + ' term(s)', body);
     const ov = document.querySelector('#tpOverlay');
-    const add = (apply) => {
+    ov.querySelector('#tt_add').onclick = () => {
       const s = ov.querySelector('#tt_s').value.trim(), t = ov.querySelector('#tt_t').value.trim();
       if (!s || !t) return;
-      const m = apply ? 'lac_translation.api.apply_term' : 'lac_translation.api.add_term';
-      frappe.call({ method: m, args: { project: S.project, source_term: s, target_term: t } })
-        .then(r => { frappe.show_alert({ message: apply ? ('Applying to ' + ((r.message || {}).affected || 0) + '…') : 'Term added', indicator: 'blue' }); loadTerms().then(openTerms); });
+      frappe.call({ method: 'lac_translation.api.add_term', args: { project: S.project, source_term: s, target_term: t } })
+        .then(() => { frappe.show_alert({ message: 'Term added', indicator: 'green' }); loadTerms().then(openTerms); });
     };
-    ov.querySelector('#tt_add').onclick = () => add(false);
-    const applyEl = ov.querySelector('#tt_apply');
-    if (applyEl) applyEl.onclick = () => add(true);
-    ov.querySelectorAll('[data-tapply]').forEach(b => b.onclick = () => {
-      const [s, t] = b.getAttribute('data-tapply').split('|||');
-      frappe.confirm('Re-generate all non-locked segments to use “' + s + '” → “' + t + '”?', () => {
-        frappe.call({ method: 'lac_translation.api.apply_term', args: { project: S.project, source_term: s, target_term: t } })
-          .then(r => { ov.classList.remove('open'); frappe.show_alert({ message: 'Applying to ' + ((r.message || {}).affected || 0) + ' segment(s)…', indicator: 'blue' }); });
-      });
+    const fFind = ov.querySelector('#fr_find'), fRep = ov.querySelector('#fr_rep'), fCount = ov.querySelector('#fr_count');
+    const runFind = () => {
+      const f = fFind.value.trim(); if (!f) { fCount.textContent = ''; return; }
+      fCount.textContent = 'Searching…';
+      frappe.call({ method: 'lac_translation.api.term_find', args: { project: S.project, find_text: f } })
+        .then(r => { const d = r.message || {}; fCount.innerHTML = d.matches ? `<b>${d.matches}</b> sentence(s) contain “${esc(f)}”${d.seqs && d.seqs.length ? ' — §' + d.seqs.slice(0, 12).join(', §') + (d.matches > 12 ? '…' : '') : ''}` : `No sentences contain “${esc(f)}”.`; });
+    };
+    const runReplace = (mode) => {
+      const f = fFind.value.trim(), t = fRep.value.trim();
+      if (!f || !t) { frappe.show_alert({ message: 'Enter both find and replace text.', indicator: 'orange' }); return; }
+      const go = () => frappe.call({ method: 'lac_translation.api.term_replace', args: { project: S.project, find_text: f, replace_text: t, mode } })
+        .then(r => { const d = r.message || {}; ov.classList.remove('open'); frappe.show_alert({ message: (mode === 'apply' ? 'Replaced directly in ' : 'Added suggestions for ') + (d.changed || 0) + ' sentence(s)', indicator: 'green' }); loadSegs(); });
+      if (mode === 'apply') frappe.confirm(`Directly replace “${esc(f)}” → “${esc(t)}” in every non-locked sentence?`, go); else go();
+    };
+    ov.querySelector('#fr_findbtn').onclick = runFind;
+    fFind.addEventListener('keydown', e => { if (e.key === 'Enter') runFind(); });
+    ov.querySelector('#fr_suggest').onclick = () => runReplace('suggest');
+    const applyBtnEl = ov.querySelector('#fr_apply'); if (applyBtnEl) applyBtnEl.onclick = () => runReplace('apply');
+    ov.querySelectorAll('[data-fr]').forEach(b => b.onclick = () => {
+      const [f, t] = b.getAttribute('data-fr').split('|||');
+      fFind.value = f; fRep.value = t; runFind(); fFind.focus();
     });
   }
 
