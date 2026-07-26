@@ -158,6 +158,11 @@
 .tp .rsent.flag::before{content:"⚠";font-size:.8em;margin-right:2px;opacity:.85}
 .tp .rbi .rsent.flag::before{content:""}
 .tp .tp-flagbar{background:color-mix(in srgb,var(--gold) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--gold) 45%,var(--border));color:var(--ink);border-radius:12px;padding:9px 13px;margin-bottom:10px;font-size:13px;font-weight:600;line-height:1.5}
+/* AI-filled gap passages (machine translation covering a skipped section) — teal, distinct from the amber faithfulness flag */
+.tp .rsent.aifill{background:color-mix(in srgb,var(--accent) 9%,transparent);border-bottom:1px dashed color-mix(in srgb,var(--accent) 55%,transparent);border-radius:4px}
+.tp .rsent.aifill::before{content:"✦";font-size:.72em;vertical-align:.15em;margin-right:2px;color:var(--accent);opacity:.85}
+.tp .rbi .rsent.aifill::before{content:""}
+.tp .tp-aibar{background:color-mix(in srgb,var(--accent) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--accent) 40%,var(--border));color:var(--ink);border-radius:12px;padding:9px 13px;margin-bottom:10px;font-size:13px;font-weight:600;line-height:1.5}
 .tp .diff ins{background:var(--add-bg);color:var(--add-ink);text-decoration:none;border-radius:3px;padding:0 1px}
 .tp .diff del{background:var(--del-bg);color:var(--del-ink);border-radius:3px;padding:0 1px}
 .tp .nochange{color:var(--faint);font-family:var(--sans);font-size:13px;font-style:italic}

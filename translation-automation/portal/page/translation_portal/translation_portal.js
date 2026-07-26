@@ -305,7 +305,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const othersHtml = others.map(su => `<div class="tp-card sug"><div class="lbl"><span class="name">${su.origin === 'Imported' ? 'Imported change' : 'Also suggested'}${su.author ? ' · ' + esc(su.author) : ''}</span>${isAdmin ? `<span style="display:flex;gap:6px"><button class="tp-btn primary" data-act="acceptsug" data-sug="${su.name}" style="padding:3px 9px;font-size:12px">✔ Accept</button><button class="tp-btn" data-act="rejectsug" data-sug="${su.name}" style="padding:3px 9px;font-size:12px">Reject</button></span>` : ''}</div><div class="body"><div class="diff">${diff(cur, su.suggested_text)}</div></div>${su.note ? `<div class="notes"><span>${esc(su.note)}</span></div>` : ''}</div>`).join('');
     // faithfulness flag: the AI thinks this passage may drop content vs the English
     const flagBar = (s.reviewer_comment || '').trim().startsWith('⚠') ? `<div class="tp-flagbar">${esc(s.reviewer_comment)} <span style="opacity:.75;font-weight:400">— check the English above; expand the translation if this detail is missing.</span></div>` : '';
-    return `${flagBar}${enCardHTML(s)}${curCard}${aiCard}${suggestCard}${othersHtml}${commentsCardHTML}`;
+    // AI-filled gap: this whole passage was machine-translated to cover a section the translator skipped
+    const aiBar = s.model === 'AI-omission' ? `<div class="tp-aibar">✦ AI-filled gap — this passage was machine-translated to cover a section the translator skipped, so nothing from the book is lost. Review and edit it to publication quality, or remove it if it isn't needed.</div>` : '';
+    return `${aiBar}${flagBar}${enCardHTML(s)}${curCard}${aiCard}${suggestCard}${othersHtml}${commentsCardHTML}`;
   }
 
   // ---- reading render (A4-like pages so position is easy to remember) ----
@@ -335,8 +337,10 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         if (tok.t === 'chap') return `<div class="chap-title">${esc(tok.ch)}</div>`;
         const s = tok.s, sel = (open && s.name === S.cur) ? ' sel' : '';
         const flag = (s.reviewer_comment || '').trim().startsWith('⚠');
-        const cls = `rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${flag ? ' flag' : ''}${sel}`;
-        const ttl = flag ? ` title="${esc(s.reviewer_comment).replace(/"/g, '&quot;')}"` : '';
+        const ai = s.model === 'AI-omission';
+        const cls = `rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${flag ? ' flag' : ''}${ai ? ' aifill' : ''}${sel}`;
+        const ttl = flag ? ` title="${esc(s.reviewer_comment).replace(/"/g, '&quot;')}"`
+          : (ai ? ' title="AI-filled — covers a section the translator skipped; review or remove"' : '');
         // show a pending suggestion inline as a red/green tracked change
         const sug = sugFor(s.name);
         const content = (sug && (sug.suggested_text || '').trim() && (sug.suggested_text || '').trim() !== (tok.txt || '').trim()) ? diff(tok.txt, sug.suggested_text) : esc(tok.txt);

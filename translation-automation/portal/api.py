@@ -2005,6 +2005,43 @@ def _faithfulness_audit_job(project, model="gpt-4o", batch=8):
     return summary
 
 
+@frappe.whitelist()
+def normalize_structure(project):
+    """One-time structure cleanup so the reader groups the book cleanly:
+    (1) forward-fill blank chapter labels from the nearest preceding titled
+    segment in reading order, so every paragraph sits under its section; and
+    (2) smooth single-segment chapter anomalies (a lone segment whose chapter
+    differs from BOTH neighbours — usually an AI-fill placed at a chapter
+    boundary — is relabelled to the surrounding chapter) so chapter ranges stop
+    overlapping. Changes only the 'chapter' label — never the translation."""
+    frappe.only_for("System Manager")
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "chapter"], order_by="seq asc, creation asc",
+                          limit_page_length=0)
+    # pass 1: forward-fill blanks
+    cur, filled = "", 0
+    for s in segs:
+        ch = (s.get("chapter") or "").strip()
+        if ch:
+            cur = ch
+        elif cur:
+            s["chapter"] = cur
+            frappe.db.set_value("Translation Segment", s["name"], "chapter", cur, update_modified=False)
+            filled += 1
+    # pass 2: smooth lone anomalies (prev == next != this) -> prev
+    smoothed = 0
+    for i in range(1, len(segs) - 1):
+        a = (segs[i - 1].get("chapter") or "").strip()
+        b = (segs[i].get("chapter") or "").strip()
+        c = (segs[i + 1].get("chapter") or "").strip()
+        if a and a == c and b != a:
+            frappe.db.set_value("Translation Segment", segs[i]["name"], "chapter", a, update_modified=False)
+            segs[i]["chapter"] = a
+            smoothed += 1
+    frappe.db.commit()
+    return {"filled_blank_chapters": filled, "smoothed_anomalies": smoothed}
+
+
 # --------------------------------------------------------------------------
 # PDF-faithful full build (Option B): translate EVERY English sentence of the
 # source-of-truth PDF, in PDF order, into a NEW project. Uses the existing
