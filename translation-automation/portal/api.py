@@ -391,6 +391,113 @@ def ai_suggest_one(segment, hint=""):
     return {"mn": r.get("mn", ""), "alt": r.get("alt", ""), "notes": r.get("notes", "")}
 
 
+def _norm_en(t):
+    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+
+
+def _norm_mn(t):
+    t = re.sub(r"[^Ѐ-ӿ0-9]+", " ", (t or "").lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+@frappe.whitelist()
+def bridge_review(source_project="TRP-00003", target_project="TRP-00004", author="erdenetuya.m@gmail.com"):
+    """Bring an imported redactor review from `source_project` onto the working
+    book `target_project`. Each source segment is matched to a target segment by
+    English source (exact, normalised); if that fails, by a UNIQUE 60-char
+    Mongolian prefix of the current target text. For every match whose text
+    actually differs, one Translation Suggestion (origin 'Imported') is created
+    on the target so it shows as a red/green change. Comments are bridged the
+    same way. Idempotent: prior origin='Imported' suggestions on the target are
+    removed first, and duplicate comments are skipped."""
+    frappe.only_for("System Manager")
+
+    tsegs = frappe.get_all("Translation Segment", filters={"project": target_project},
+                           fields=["name", "source_text", "final_text", "ai_suggestion", "draft_text"],
+                           limit_page_length=0)
+    en_map, pfx_seg, pfx_cnt = {}, {}, {}
+    for r in tsegs:
+        ke = _norm_en(r.source_text)
+        if ke and ke not in en_map:
+            en_map[ke] = r
+        cur = r.final_text or r.ai_suggestion or r.draft_text or ""
+        km = _norm_mn(cur)
+        if len(km) >= 60:
+            p = km[:60]
+            pfx_cnt[p] = pfx_cnt.get(p, 0) + 1
+            pfx_seg[p] = r
+    uniq_pfx = {p: seg for p, seg in pfx_seg.items() if pfx_cnt.get(p) == 1}
+
+    def _match(en, mn):
+        seg = en_map.get(_norm_en(en))
+        if seg:
+            return seg
+        dm = _norm_mn(mn)
+        if len(dm) >= 60:
+            return uniq_pfx.get(dm[:60])
+        return None
+
+    # idempotent: clear previously bridged suggestions
+    for n in frappe.get_all("Translation Suggestion",
+                            filters={"project": target_project, "origin": "Imported"}, pluck="name"):
+        frappe.delete_doc("Translation Suggestion", n, force=1, ignore_permissions=True)
+
+    src = frappe.db.sql("""
+        SELECT sg.suggested_text AS sug, sg.note AS note,
+               seg.source_text AS en, seg.draft_text AS v3mn, seg.name AS v3seg
+        FROM `tabTranslation Suggestion` sg
+        JOIN `tabTranslation Segment` seg ON seg.name = sg.segment
+        WHERE sg.project=%s AND sg.origin='Imported' AND sg.status='Open'
+    """, (source_project,), as_dict=True)
+
+    made, seg_for_v3 = 0, {}
+    for s in src:
+        seg = _match(s.en, s.v3mn)
+        if not seg:
+            continue
+        seg_for_v3[s.v3seg] = seg.name
+        cur = seg.final_text or seg.ai_suggestion or seg.draft_text or ""
+        if _norm_mn(s.sug) == _norm_mn(cur):
+            continue  # nothing would change on the target
+        frappe.get_doc({
+            "doctype": "Translation Suggestion", "project": target_project,
+            "segment": seg.name, "origin": "Imported", "author": author,
+            "suggested_text": s.sug, "note": s.note or "", "status": "Open",
+        }).insert(ignore_permissions=True)
+        made += 1
+
+    # bridge the redactor's comments on the same mapping (skip duplicates)
+    cmts = frappe.db.sql("""
+        SELECT c.content AS content, c.reference_name AS v3seg
+        FROM `tabComment` c JOIN `tabTranslation Segment` seg ON seg.name = c.reference_name
+        WHERE c.reference_doctype='Translation Segment' AND c.comment_type='Comment' AND seg.project=%s
+    """, (source_project,), as_dict=True)
+    cmade = 0
+    for c in cmts:
+        tgt = seg_for_v3.get(c.v3seg)
+        if not tgt:
+            v3 = frappe.db.get_value("Translation Segment", c.v3seg, ["source_text", "draft_text"], as_dict=True)
+            seg = _match(v3.source_text, v3.draft_text) if v3 else None
+            tgt = seg.name if seg else None
+        if not tgt:
+            continue
+        if frappe.db.exists("Comment", {"reference_doctype": "Translation Segment",
+                                        "reference_name": tgt, "comment_type": "Comment",
+                                        "content": c.content}):
+            continue
+        frappe.get_doc({
+            "doctype": "Comment", "comment_type": "Comment",
+            "reference_doctype": "Translation Segment", "reference_name": tgt,
+            "content": c.content,
+        }).insert(ignore_permissions=True)
+        cmade += 1
+
+    frappe.db.commit()
+    return {"source": source_project, "target": target_project,
+            "source_suggestions": len(src), "suggestions_created": made,
+            "comments_created": cmade}
+
+
 @frappe.whitelist()
 def export_docx(project):
     frappe.only_for("System Manager")

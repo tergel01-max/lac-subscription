@@ -203,8 +203,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     loadComments(s.name, $id('tpWork'));
   }
 
-  // pick the suggestion to show inline for a segment (prefer the viewer's own)
-  function sugFor(name) { const arr = (S.suggestions || []).filter(x => x.segment === name); return arr.find(x => x.author === frappe.session.user) || arr[0] || null; }
+  // pick the suggestion to show inline for a segment (the viewer's own live edit
+  // wins; otherwise show whatever suggestion exists — e.g. the imported review)
+  function sugFor(name) { const arr = (S.suggestions || []).filter(x => x.segment === name); return arr.find(x => x.origin === 'Reviewer' && x.author === frappe.session.user) || arr[0] || null; }
 
   // ---- reading render (A4-like pages so position is easy to remember) ----
   function renderReader() {
