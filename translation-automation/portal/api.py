@@ -375,6 +375,23 @@ def regenerate(segment, hint=""):
 
 
 @frappe.whitelist()
+def ai_suggest_one(segment, hint=""):
+    """Return an AI-improved Mongolian for ONE sentence WITHOUT touching the
+    stored segment — so a reviewer can ask the model for a better wording and
+    then save it as their own suggestion. Callable by reviewers (bounded: one
+    sentence per click)."""
+    frappe.only_for(["System Manager", "Translation Reviewer"])
+    s = frappe.get_doc("Translation Segment", segment)
+    proj = frappe.get_doc("Translation Project", s.project)
+    model = proj.model or "gpt-4o"
+    current = s.final_text or s.ai_suggestion or s.draft_text or ""
+    results, _u = _openai(model, _eff_glossary(proj),
+                          [{"id": 1, "source_text": s.source_text, "draft_text": current}], hint=hint)
+    r = results.get(1) or {"mn": "", "alt": "", "notes": ""}
+    return {"mn": r.get("mn", ""), "alt": r.get("alt", ""), "notes": r.get("notes", "")}
+
+
+@frappe.whitelist()
 def export_docx(project):
     frappe.only_for("System Manager")
     proj = frappe.get_doc("Translation Project", project)
