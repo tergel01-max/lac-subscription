@@ -1958,8 +1958,12 @@ def setup_reviewer(email, first_name="Reviewer", password=None):
     else:
         u = frappe.get_doc({"doctype": "User", "email": email, "first_name": first_name,
                             "send_welcome_email": 0, "user_type": "System User"}).insert(ignore_permissions=True)
-    if not any((r.role == role) for r in (u.roles or [])):
-        u.append("roles", {"role": role})
+    # Reviewer gets EXACTLY this role and nothing else, so their access is
+    # limited to the translation portal and its data — no other ERP module.
+    u.set("roles", [])
+    u.append("roles", {"role": role})
+    u.user_type = "System User"
+    u.enabled = 1
     u.save(ignore_permissions=True)
     if password:
         from frappe.utils.password import update_password
