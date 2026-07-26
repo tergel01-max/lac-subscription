@@ -153,6 +153,11 @@
 .tp .tp-card.sug .lbl .name{color:color-mix(in srgb,var(--s-Edited) 82%,var(--ink))}
 .tp .tp-sugbadge{color:var(--s-Edited);font-weight:700}
 .tp .rsent.has-sug{background:color-mix(in srgb,var(--s-Edited) 12%,transparent);border-radius:4px}
+/* faithfulness flag: passage may drop content vs the English (amber, distinct from edits) */
+.tp .rsent.flag{background:color-mix(in srgb,var(--gold) 16%,transparent);border-bottom:2px dotted var(--gold);border-radius:4px}
+.tp .rsent.flag::before{content:"⚠";font-size:.8em;margin-right:2px;opacity:.85}
+.tp .rbi .rsent.flag::before{content:""}
+.tp .tp-flagbar{background:color-mix(in srgb,var(--gold) 18%,var(--surface));border:1px solid color-mix(in srgb,var(--gold) 45%,var(--border));color:var(--ink);border-radius:12px;padding:9px 13px;margin-bottom:10px;font-size:13px;font-weight:600;line-height:1.5}
 .tp .diff ins{background:var(--add-bg);color:var(--add-ink);text-decoration:none;border-radius:3px;padding:0 1px}
 .tp .diff del{background:var(--del-bg);color:var(--del-ink);border-radius:3px;padding:0 1px}
 .tp .nochange{color:var(--faint);font-family:var(--sans);font-size:13px;font-style:italic}

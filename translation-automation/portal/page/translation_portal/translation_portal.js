@@ -42,6 +42,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             <div class="tp-mi-sep"></div>
             <button class="tp-mi" id="tpAudit">🔎 Find missing passages (audit)</button>
             <button class="tp-mi" id="tpComplete">✚ Complete book — fill missing</button>
+            <button class="tp-mi" id="tpFaithful">🔍 Faithfulness check (dropped content)</button>
             <button class="tp-mi" id="tpRevert">↩ Remove AI-filled passages</button>
             <div class="tp-mi-sep"></div>
             <button class="tp-mi" id="tpTxt">⬇ Export .txt</button>
@@ -302,7 +303,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const removeBtn = mine ? `<button class="tp-btn ghost" data-act="delsug" data-sug="${mine.name}" style="padding:3px 9px;font-size:12px">Remove</button>` : '';
     const suggestCard = `<div class="tp-card suggest"><div class="lbl"><span class="name">✎ Suggested edit — saves automatically</span><span style="display:flex;gap:6px">${acceptBtn}${removeBtn}</span></div><div class="body" style="padding:0"><textarea class="tp-suggest" placeholder="Type your change here or in the book text — it saves as you type and shows green/red.">${esc(myText)}</textarea></div><div class="tp-sugdiff">${liveDiff}</div></div>`;
     const othersHtml = others.map(su => `<div class="tp-card sug"><div class="lbl"><span class="name">${su.origin === 'Imported' ? 'Imported change' : 'Also suggested'}${su.author ? ' · ' + esc(su.author) : ''}</span>${isAdmin ? `<span style="display:flex;gap:6px"><button class="tp-btn primary" data-act="acceptsug" data-sug="${su.name}" style="padding:3px 9px;font-size:12px">✔ Accept</button><button class="tp-btn" data-act="rejectsug" data-sug="${su.name}" style="padding:3px 9px;font-size:12px">Reject</button></span>` : ''}</div><div class="body"><div class="diff">${diff(cur, su.suggested_text)}</div></div>${su.note ? `<div class="notes"><span>${esc(su.note)}</span></div>` : ''}</div>`).join('');
-    return `${enCardHTML(s)}${curCard}${aiCard}${suggestCard}${othersHtml}${commentsCardHTML}`;
+    // faithfulness flag: the AI thinks this passage may drop content vs the English
+    const flagBar = (s.reviewer_comment || '').trim().startsWith('⚠') ? `<div class="tp-flagbar">${esc(s.reviewer_comment)} <span style="opacity:.75;font-weight:400">— check the English above; expand the translation if this detail is missing.</span></div>` : '';
+    return `${flagBar}${enCardHTML(s)}${curCard}${aiCard}${suggestCard}${othersHtml}${commentsCardHTML}`;
   }
 
   // ---- reading render (A4-like pages so position is easy to remember) ----
@@ -331,12 +334,14 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       const inner = pg.map(tok => {
         if (tok.t === 'chap') return `<div class="chap-title">${esc(tok.ch)}</div>`;
         const s = tok.s, sel = (open && s.name === S.cur) ? ' sel' : '';
-        const cls = `rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${sel}`;
+        const flag = (s.reviewer_comment || '').trim().startsWith('⚠');
+        const cls = `rsent st-${s.status}${sc[s.name] ? ' has-sug' : ''}${flag ? ' flag' : ''}${sel}`;
+        const ttl = flag ? ` title="${esc(s.reviewer_comment).replace(/"/g, '&quot;')}"` : '';
         // show a pending suggestion inline as a red/green tracked change
         const sug = sugFor(s.name);
         const content = (sug && (sug.suggested_text || '').trim() && (sug.suggested_text || '').trim() !== (tok.txt || '').trim()) ? diff(tok.txt, sug.suggested_text) : esc(tok.txt);
-        if (S.bilingual) return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="${cls}" data-name="${s.name}">${content}</div></div>`;
-        return `<span class="${cls}" data-name="${s.name}">${content} </span>`;
+        if (S.bilingual) return `<div class="rbi"><div class="en">${esc(s.source_text)}</div><div class="${cls}"${ttl} data-name="${s.name}">${content}</div></div>`;
+        return `<span class="${cls}"${ttl} data-name="${s.name}">${content} </span>`;
       }).join('');
       return `<div class="tp-page" data-page="${pi + 1}"><div class="tp-pagebody${S.bilingual ? ' bi' : ''}">${inner}</div><div class="tp-pagenum">— ${pi + 1} / ${total} —</div></div>`;
     }).join('') || '<div style="color:var(--faint)">No segments.</div>';
@@ -588,7 +593,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   // import/align/audit/complete/export).
   if (!frappe.user.has_role('System Manager')) {
     ['tpGen', 'tpImportReviewDoc', 'tpImport', 'tpImportReviewed', 'tpRealign',
-     'tpAudit', 'tpComplete', 'tpRevert', 'tpTxt', 'tpDocx']
+     'tpAudit', 'tpComplete', 'tpFaithful', 'tpRevert', 'tpTxt', 'tpDocx']
       .forEach(id => { const el = $id(id); if (el) el.style.display = 'none'; });
     document.querySelectorAll('#tpMenu .tp-mi-sep').forEach(el => { el.style.display = 'none'; });
   }
@@ -663,6 +668,13 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     frappe.confirm('Remove all AI-filled (Suggested) passages from this book? Your original translation is not touched.', () => {
       frappe.call({ method: 'lac_translation.api.revert_omissions', args: { project: S.project } })
         .then(r => { frappe.show_alert({ message: 'Removed ' + ((r.message || {}).deleted || 0) + ' AI passage(s)', indicator: 'orange' }); loadSegs(); });
+    });
+  };
+  $id('tpFaithful').onclick = () => {
+    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
+    frappe.confirm('Check every translator passage against its English source for <b>dropped content</b> (condensed sentences that lost a fact/clause)? Risky sentences get a ⚠ flag in the reading view — no text is changed. Runs in the background (~a few minutes, uses AI).', () => {
+      frappe.call({ method: 'lac_translation.api.faithfulness_audit', args: { project: S.project } })
+        .then(() => frappe.show_alert({ message: 'Faithfulness check running — ⚠ flags appear as it finishes. Refresh in a few minutes.', indicator: 'blue' }));
     });
   };
   $id('tpImportReviewed').onclick = () => {
