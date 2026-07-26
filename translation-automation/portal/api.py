@@ -1873,6 +1873,7 @@ def faithfulness_audit(project, model="gpt-4o", batch=8):
 
 def _faithfulness_audit_job(project, model="gpt-4o", batch=8):
     from collections import Counter
+    import re
     headers = _headers()
     batch = int(batch)
     segs = frappe.get_all("Translation Segment", filters={"project": project},
@@ -1895,10 +1896,23 @@ def _faithfulness_audit_job(project, model="gpt-4o", batch=8):
                  if 0 <= j < len(human) and human[j].get("chapter") == ch and mn(human[j])]
         return " ".join(parts)
 
-    items = []  # (segment, english, mn_window)
+    def is_datacell(mn_text, en_text):
+        # numbers / dosage tables / split cells — not prose worth a completeness check
+        letters = re.sub(r"[^A-Za-zА-Яа-яӨөҮүЁё]", "", mn_text)
+        if len(letters) < 8:
+            return True
+        if re.search(r"\bLot\s*\d|\bmg\s*/\s*kg|\bkg\s*/\s*day|\bg\s*/\s*l\b", en_text or "", re.I):
+            return True
+        d = sum(c.isdigit() for c in en_text)
+        return bool(en_text) and d / len(en_text) > 0.20
+
+    items, skipped_data = [], 0  # items: (segment, english, mn_window)
     for i, s in enumerate(human):
         en = (s.get("source_text") or "").strip()
         if not en or not mn(s) or en_counts[en] > 1:
+            continue
+        if is_datacell(mn(s), en):
+            skipped_data += 1
             continue
         items.append((s, en, window(i)))
 
@@ -1910,41 +1924,62 @@ def _faithfulness_audit_job(project, model="gpt-4o", batch=8):
 
     SYS = ("You are a meticulous bilingual editor checking a Mongolian book translation for "
            "COMPLETENESS against its English source.")
-    instr = (
+    JSON_SHAPE = ('\nReturn JSON {"items":[{"id":<int>,"complete":<true|false>,'
+                  '"missing":"<short Mongolian phrase naming exactly what is absent; empty when complete>"}]} '
+                  "with exactly one element per id.")
+    instr_a = (
         "Each item gives one English sentence (EN) and the surrounding Mongolian passage (MN) that "
         "should contain its content. The Mongolian may use different wording or order, or split the "
         "content across sentences — judge by MEANING over the WHOLE MN passage, not word-for-word, "
         "and treat content as present if it appears anywhere in the MN passage. Mongolian is "
         "naturally more compact, so DO NOT flag brevity, style, word order or dropped filler. Flag "
         "ONLY when a specific fact, number, named entity or claim in EN has NO counterpart anywhere "
-        "in the MN passage.\n"
-        'Return JSON {"items":[{"id":<int>,"complete":<true|false>,'
-        '"missing":"<short Mongolian phrase naming exactly what is absent; empty when complete>"}]} '
-        "with exactly one element per id.")
+        "in the MN passage." + JSON_SHAPE)
+    # Second, stricter pass — biased toward dismissing to remove false alarms.
+    instr_b = (
+        "You are RE-CHECKING suspected omissions to eliminate false alarms. Each item gives an "
+        "English sentence (EN) and the FULL surrounding Mongolian passage (MN). Search the ENTIRE "
+        "MN passage carefully. If every substantive element of EN (facts, numbers, names, claims) "
+        "appears somewhere in MN in ANY wording, paraphrase or word order, answer complete=true. "
+        "Answer complete=false ONLY if a specific element is genuinely and wholly absent, and name "
+        "it. When in doubt, answer complete=true." + JSON_SHAPE)
 
-    flagged, in_tok, out_tok, total = [], 0, 0, len(items)
-    for b in range(0, total, batch):
-        chunk = items[b:b + batch]
-        lines = ["[%d]\nEN: %s\nMN passage: %s" % (k, en, win) for k, (s, en, win) in enumerate(chunk)]
-        payload = {"model": model, "temperature": 0.0, "response_format": {"type": "json_object"},
-                   "messages": [{"role": "system", "content": SYS},
-                                {"role": "user", "content": instr + "\n\nItems:\n" + "\n\n".join(lines)}]}
-        try:
-            resp = make_post_request("https://api.openai.com/v1/chat/completions",
-                                     headers=headers, data=json.dumps(payload))
-            data = json.loads(resp["choices"][0]["message"]["content"])
-            u = resp.get("usage", {}); in_tok += u.get("prompt_tokens", 0); out_tok += u.get("completion_tokens", 0)
-            by_id = {int(x["id"]): x for x in data.get("items", [])}
-        except Exception:
-            by_id = {}
-        for k, (s, en, win) in enumerate(chunk):
-            r = by_id.get(k)
-            if r and not r.get("complete", True) and (r.get("missing") or "").strip():
-                frappe.db.set_value("Translation Segment", s["name"], "reviewer_comment", ("⚠ " + r["missing"].strip())[:500])
-                flagged.append({"seq": s["seq"], "chapter": s.get("chapter") or "", "missing": r["missing"].strip(),
-                                "en": en, "mn": mn(s)})
-        frappe.db.commit()
-        frappe.publish_realtime("lac_translation_progress", {"project": project, "done": min(b + batch, total), "total": total})
+    usage = {"in": 0, "out": 0}
+
+    def run_pass(triples, instruction):
+        """Return the subset still judged incomplete: list of (segment, en, win, missing)."""
+        out = []
+        n = len(triples)
+        for b in range(0, n, batch):
+            chunk = triples[b:b + batch]
+            lines = ["[%d]\nEN: %s\nMN passage: %s" % (k, en, win) for k, (s, en, win) in enumerate(chunk)]
+            payload = {"model": model, "temperature": 0.0, "response_format": {"type": "json_object"},
+                       "messages": [{"role": "system", "content": SYS},
+                                    {"role": "user", "content": instruction + "\n\nItems:\n" + "\n\n".join(lines)}]}
+            try:
+                resp = make_post_request("https://api.openai.com/v1/chat/completions",
+                                         headers=headers, data=json.dumps(payload))
+                data = json.loads(resp["choices"][0]["message"]["content"])
+                u = resp.get("usage", {}); usage["in"] += u.get("prompt_tokens", 0); usage["out"] += u.get("completion_tokens", 0)
+                by_id = {int(x["id"]): x for x in data.get("items", [])}
+            except Exception:
+                by_id = {}
+            for k, (s, en, win) in enumerate(chunk):
+                r = by_id.get(k)
+                if r and not r.get("complete", True) and (r.get("missing") or "").strip():
+                    out.append((s, en, win, r["missing"].strip()))
+            frappe.publish_realtime("lac_translation_progress", {"project": project, "done": min(b + batch, n), "total": n})
+        return out
+
+    total = len(items)
+    candidates = run_pass(items, instr_a)
+    verified = run_pass([(s, en, win) for (s, en, win, _m) in candidates], instr_b)
+
+    flagged = []
+    for (s, en, win, miss) in verified:
+        frappe.db.set_value("Translation Segment", s["name"], "reviewer_comment", ("⚠ " + miss)[:500])
+        flagged.append({"seq": s["seq"], "chapter": s.get("chapter") or "", "missing": miss, "en": en, "mn": mn(s)})
+    frappe.db.commit()
 
     from frappe.utils.file_manager import save_file
     rows = "".join("<tr><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s</td><td>%s</td></tr>" % (
@@ -1952,17 +1987,20 @@ def _faithfulness_audit_job(project, model="gpt-4o", batch=8):
         for f in flagged)
     skipped_dupe = sum(1 for s in human if en_counts.get((s.get("source_text") or "").strip(), 0) > 1)
     html = ("<html><meta charset='utf-8'><body style='font-family:system-ui;font-size:14px'>"
-            "<h2>Faithfulness audit — %s</h2><p>Checked %d translator passages (context-aware; %d "
-            "duplicated-English rows skipped as list/cover artifacts); flagged %d that may drop "
-            "content vs the English. Each is also marked with a ⚠ note on its sentence in the portal.</p>"
+            "<h2>Faithfulness audit — %s</h2><p>Checked %d translator passages (context-aware, "
+            "two-pass; skipped %d duplicated-English list/cover rows and %d number/table rows). "
+            "%d passed the first pass; <b>%d</b> confirmed by the stricter second pass as possibly "
+            "dropping content. Each confirmed one is marked with a ⚠ note on its sentence in the portal.</p>"
             "<table border=1 cellpadding=6 style='border-collapse:collapse'>"
             "<tr><th>Seq</th><th>Chapter</th><th>Possibly dropped</th><th>English</th><th>Mongolian</th></tr>%s"
-            "</table></body></html>") % (project, total, skipped_dupe, len(flagged), rows)
+            "</table></body></html>") % (project, total, skipped_dupe, skipped_data,
+                                         len(candidates), len(flagged), rows)
     save_file("faithfulness_audit_%s.html" % project, html.encode("utf-8"), "Translation Project", project, is_private=1)
     frappe.db.commit()
 
-    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
-    summary = {"checked": total, "skipped_duplicated_english": skipped_dupe, "flagged": len(flagged), "est_cost_usd": cost}
+    cost = round(usage["in"] / 1e6 * 2.5 + usage["out"] / 1e6 * 10.0, 4)
+    summary = {"checked": total, "skipped_duplicated_english": skipped_dupe, "skipped_data_rows": skipped_data,
+               "first_pass_candidates": len(candidates), "flagged": len(flagged), "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False))
     return summary
 
