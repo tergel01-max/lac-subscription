@@ -1933,6 +1933,9 @@ def setup_reviewer(email, first_name="Reviewer", password=None):
         "Translation Suggestion": ["read", "write", "create", "delete"],
         "Translation Term": ["read"],
         "Comment": ["read", "create"],
+        # so commenting/editing doesn't fail on Frappe's notification writes
+        "Notification Log": ["read", "write", "create", "delete"],
+        "ToDo": ["read", "write", "create", "delete"],
     }
     for dt, ptypes in perms.items():
         try:

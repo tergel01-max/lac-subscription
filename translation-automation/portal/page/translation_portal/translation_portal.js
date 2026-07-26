@@ -113,7 +113,8 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   // ---- shared editor ----
   function editorHTML(s) {
     const locked = s.status === 'Locked', finalized = s.status === 'Accepted' || s.status === 'Edited';
-    let ai;
+    const isAdmin = frappe.user.has_role('System Manager');
+    let ai = '';
     if (s.ai_suggestion) {
       const changed = (s.ai_suggestion || '').trim() !== (s.draft_text || '').trim();
       let inner = `<div class="body"><div class="diff">${changed ? diff(s.draft_text, s.ai_suggestion) : '<span class="nochange">No change — AI kept the draft.</span>'}</div></div>`;
@@ -121,11 +122,12 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       if (!locked) {
         inner += `<div class="cta"><button class="tp-btn primary" data-act="acceptAI">✔ Accept</button>`;
         if (s.ai_alternative) inner += `<button class="alt-toggle" data-act="toggleAlt">▾ Alternative</button>`;
-        inner += `<button class="tp-btn" data-act="addterm">＋ Term</button><button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button></div>`;
+        if (isAdmin) inner += `<button class="tp-btn" data-act="addterm">＋ Term</button><button class="tp-btn" data-act="regen" style="margin-left:auto">↻ Regenerate</button>`;
+        inner += `</div>`;
         if (s.ai_alternative) inner += `<div class="alt" id="tpAlt"><div class="body" style="border-top:1px solid var(--border)">${esc(s.ai_alternative)}</div><div class="cta"><button class="tp-btn" data-act="useAlt">Use alternative</button></div></div>`;
       }
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div>${inner}</div>`;
-    } else {
+    } else if (isAdmin) {
       const gen = locked ? '' : `<div class="cta"><button class="tp-btn" data-act="regen">✨ Generate suggestion</button></div>`;
       ai = `<div class="tp-card ai"><div class="lbl"><span class="name">AI suggestion</span></div><div class="body"><span class="nochange">Not generated yet.</span></div>${gen}</div>`;
     }
