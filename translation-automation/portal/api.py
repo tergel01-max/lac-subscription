@@ -2028,18 +2028,26 @@ def normalize_structure(project):
             s["chapter"] = cur
             frappe.db.set_value("Translation Segment", s["name"], "chapter", cur, update_modified=False)
             filled += 1
-    # pass 2: smooth lone anomalies (prev == next != this) -> prev
-    smoothed = 0
-    for i in range(1, len(segs) - 1):
-        a = (segs[i - 1].get("chapter") or "").strip()
-        b = (segs[i].get("chapter") or "").strip()
-        c = (segs[i + 1].get("chapter") or "").strip()
-        if a and a == c and b != a:
-            frappe.db.set_value("Translation Segment", segs[i]["name"], "chapter", a, update_modified=False)
-            segs[i]["chapter"] = a
-            smoothed += 1
+    # pass 2: force chapters to be contiguous in reading order. Walking in
+    # reading order a chapter may only advance; a segment carrying a chapter we
+    # have already passed is a stray (usually an AI-fill dropped at a chapter
+    # boundary) and is relabelled to the current section. This removes
+    # overlapping chapter ranges so the reader groups the book strictly in order.
+    current, done, moved = "", set(), 0
+    for s in segs:
+        ch = (s.get("chapter") or "").strip()
+        if not ch or ch == current:
+            continue
+        if ch in done:                       # points back to a finished section -> stray
+            frappe.db.set_value("Translation Segment", s["name"], "chapter", current, update_modified=False)
+            s["chapter"] = current
+            moved += 1
+        else:                                # a genuinely new section begins here
+            if current:
+                done.add(current)
+            current = ch
     frappe.db.commit()
-    return {"filled_blank_chapters": filled, "smoothed_anomalies": smoothed}
+    return {"filled_blank_chapters": filled, "relabelled_stray_segments": moved}
 
 
 # --------------------------------------------------------------------------
