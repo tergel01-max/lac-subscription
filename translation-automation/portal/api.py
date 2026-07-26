@@ -2039,6 +2039,29 @@ def _reimport_review_job(project, file_url):
 
 
 @frappe.whitelist()
+def import_review_doc(file_url, staging_project="TRP-00003", target_project="TRP-00004"):
+    """One step for a fresh export of the redactor's Google Doc (Download →
+    Microsoft Word .docx, which carries her suggestions as tracked changes and
+    her comments): refresh the staging book from the doc, then re-extract the
+    edits + comments onto the working book. Idempotent — safe to re-run whenever
+    she makes more changes."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._import_review_doc_job", queue="long", timeout=6000,
+                   file_url=file_url, staging_project=staging_project, target_project=target_project)
+    return {"queued": True}
+
+
+def _import_review_doc_job(file_url, staging_project, target_project):
+    _reimport_review_job(staging_project, file_url)          # refresh staging from the fresh export
+    res = bridge_review(staging_project, target_project)      # place edits + comments onto the working book
+    frappe.db.commit()
+    frappe.publish_realtime("lac_translation_progress",
+                            {"project": target_project, "done": 1, "total": 1})
+    print(json.dumps(res, ensure_ascii=False))
+    return res
+
+
+@frappe.whitelist()
 def clear_review(project):
     """Remove all imported review (suggestions + segment comments) from a
     project, without importing anything. For undoing a review imported onto the

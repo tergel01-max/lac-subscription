@@ -35,6 +35,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             <button class="tp-mi" id="tpTerms">📕 Terms</button>
             <button class="tp-mi" id="tpGloss">📑 Glossary</button>
             <div class="tp-mi-sep"></div>
+            <button class="tp-mi" id="tpImportReviewDoc">⇄ Import redactor's review (Google Doc)</button>
             <button class="tp-mi" id="tpImport">＋ Import book (EN + MN)</button>
             <button class="tp-mi" id="tpImportReviewed">⇄ Import reviewed translation</button>
             <button class="tp-mi" id="tpImportRev">⇄ Attach review to current book</button>
@@ -587,7 +588,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   // core job) — we only hide the admin book-management tools (bulk AI generate,
   // import/align/audit/complete/export).
   if (!frappe.user.has_role('System Manager')) {
-    ['tpGen', 'tpImport', 'tpImportReviewed', 'tpImportRev', 'tpRealign',
+    ['tpGen', 'tpImportReviewDoc', 'tpImport', 'tpImportReviewed', 'tpImportRev', 'tpRealign',
      'tpAudit', 'tpComplete', 'tpRevert', 'tpTxt', 'tpDocx']
       .forEach(id => { const el = $id(id); if (el) el.style.display = 'none'; });
     document.querySelectorAll('#tpMenu .tp-mi-sep').forEach(el => { el.style.display = 'none'; });
@@ -681,6 +682,19 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
         d.hide(); frappe.show_alert({ message: 'Importing reviewed translation…', indicator: 'blue' });
         frappe.call({ method: 'lac_translation.api.import_reviewed', args: { title: v.title, mongolian_file_url: v.mongolian, english_file_url: v.english || '', model: v.model || 'gpt-4o', glossary: v.glossary || '' } })
           .then(r => { const m = r.message || {}; frappe.show_alert({ message: 'Imported ' + (m.segments || 0) + ' segments, ' + (m.suggestions || 0) + ' change(s), ' + (m.comments || 0) + ' comment(s)', indicator: 'green' }); loadProjects().then(() => { S.project = m.project; const sel = $id('tpBook'); if (sel) sel.value = m.project; S.cur = null; loadSegs(); }); });
+      },
+    });
+    d.show();
+  };
+  $id('tpImportReviewDoc').onclick = () => {
+    const d = new frappe.ui.Dialog({
+      title: 'Import redactor’s review from her Google Doc',
+      fields: [{ fieldname: 'file', fieldtype: 'Attach', label: 'Her doc exported as Word (.docx)', reqd: 1 },
+      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">In her Google Doc: <b>File → Download → Microsoft Word (.docx)</b> — this keeps her suggestions as tracked changes and her comments. Upload it here. It <b>replaces</b> the previous import (no duplicates): each of her edits is placed on the matching sentence as a green/red change and her comments attach to it. Runs in the background — refresh in a minute.</div>' }],
+      primary_action_label: 'Import her changes',
+      primary_action(v) {
+        d.hide(); frappe.show_alert({ message: 'Importing her review in the background — refresh in a minute…', indicator: 'blue' });
+        frappe.call({ method: 'lac_translation.api.import_review_doc', args: { file_url: v.file } });
       },
     });
     d.show();
