@@ -466,42 +466,78 @@ def _norm_mn(t):
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _word_ops(a, b):
+    """Word-level LCS diff -> list of ('eq'|'del'|'ins', word)."""
+    m, k = len(a), len(b)
+    dp = [[0] * (k + 1) for _ in range(m + 1)]
+    for i in range(m - 1, -1, -1):
+        for j in range(k - 1, -1, -1):
+            dp[i][j] = dp[i + 1][j + 1] + 1 if a[i] == b[j] else max(dp[i + 1][j], dp[i][j + 1])
+    ops, i, j = [], 0, 0
+    while i < m and j < k:
+        if a[i] == b[j]:
+            ops.append(("eq", a[i])); i += 1; j += 1
+        elif dp[i + 1][j] >= dp[i][j + 1]:
+            ops.append(("del", a[i])); i += 1
+        else:
+            ops.append(("ins", b[j])); j += 1
+    while i < m:
+        ops.append(("del", a[i])); i += 1
+    while j < k:
+        ops.append(("ins", b[j])); j += 1
+    return ops
+
+
+def _edit_pairs(before, after, ctx=3):
+    """Extract each minimal change between `before` and `after` as an
+    (old_phrase, new_phrase) pair, each a contiguous substring (a few context
+    words on either side) so it can be located in another text."""
+    a, b = (before or "").split(), (after or "").split()
+    ops = _word_ops(a, b)
+    n, idx, out = len(ops), 0, []
+    while idx < n:
+        if ops[idx][0] == "eq":
+            idx += 1
+            continue
+        start = idx
+        while idx < n and ops[idx][0] != "eq":
+            idx += 1
+        end = idx
+        pre = [ops[t][1] for t in range(max(0, start - ctx), start) if ops[t][0] == "eq"]
+        post = [ops[t][1] for t in range(end, min(n, end + ctx)) if ops[t][0] == "eq"]
+        dels = [ops[t][1] for t in range(start, end) if ops[t][0] == "del"]
+        inss = [ops[t][1] for t in range(start, end) if ops[t][0] == "ins"]
+        old_str = " ".join(pre + dels + post).strip()
+        new_str = " ".join(pre + inss + post).strip()
+        if len(old_str) >= 10 and old_str != new_str:
+            out.append((old_str, new_str))
+    return out
+
+
 @frappe.whitelist()
 def bridge_review(source_project="TRP-00003", target_project="TRP-00004", author="erdenetuya.m@gmail.com"):
     """Bring an imported redactor review from `source_project` onto the working
-    book `target_project`. Each source segment is matched to a target segment by
-    English source (exact, normalised); if that fails, by a UNIQUE 60-char
-    Mongolian prefix of the current target text. For every match whose text
-    actually differs, one Translation Suggestion (origin 'Imported') is created
-    on the target so it shows as a red/green change. Comments are bridged the
-    same way. Idempotent: prior origin='Imported' suggestions on the target are
-    removed first, and duplicate comments are skipped."""
+    book `target_project`.
+
+    The source is a DIFFERENT, paragraph-level translation, so its suggestions
+    can't be pasted whole onto v4's sentences (that shows the whole paragraph as
+    an insertion). Instead we EXTRACT each actual edit the redactor made
+    (changed words + a little context) and apply just that edit to the specific
+    target sentence that contains the phrase — producing small, correct red/green
+    changes. Edits whose context does not exist in the target are skipped (the
+    two translations genuinely differ there). Idempotent: prior origin='Imported'
+    suggestions on the target are cleared first."""
     frappe.only_for("System Manager")
 
     tsegs = frappe.get_all("Translation Segment", filters={"project": target_project},
-                           fields=["name", "source_text", "final_text", "ai_suggestion", "draft_text"],
+                           fields=["name", "source_text", "final_text", "ai_suggestion", "draft_text", "status"],
                            limit_page_length=0)
-    en_map, pfx_seg, pfx_cnt = {}, {}, {}
+    cur_of, en_map = {}, {}
     for r in tsegs:
+        cur_of[r.name] = "" if r.status == "Locked" else (r.final_text or r.ai_suggestion or r.draft_text or "")
         ke = _norm_en(r.source_text)
         if ke and ke not in en_map:
-            en_map[ke] = r
-        cur = r.final_text or r.ai_suggestion or r.draft_text or ""
-        km = _norm_mn(cur)
-        if len(km) >= 60:
-            p = km[:60]
-            pfx_cnt[p] = pfx_cnt.get(p, 0) + 1
-            pfx_seg[p] = r
-    uniq_pfx = {p: seg for p, seg in pfx_seg.items() if pfx_cnt.get(p) == 1}
-
-    def _match(en, mn):
-        seg = en_map.get(_norm_en(en))
-        if seg:
-            return seg
-        dm = _norm_mn(mn)
-        if len(dm) >= 60:
-            return uniq_pfx.get(dm[:60])
-        return None
+            en_map[ke] = r.name
 
     # idempotent: clear previously bridged suggestions
     for n in frappe.get_all("Translation Suggestion",
@@ -509,42 +545,51 @@ def bridge_review(source_project="TRP-00003", target_project="TRP-00004", author
         frappe.delete_doc("Translation Suggestion", n, force=1, ignore_permissions=True)
 
     src = frappe.db.sql("""
-        SELECT sg.suggested_text AS sug, sg.note AS note,
-               seg.source_text AS en, seg.draft_text AS v3mn, seg.name AS v3seg
+        SELECT sg.suggested_text AS sug, seg.draft_text AS v3mn, seg.source_text AS en, seg.name AS v3seg
         FROM `tabTranslation Suggestion` sg
         JOIN `tabTranslation Segment` seg ON seg.name = sg.segment
         WHERE sg.project=%s AND sg.origin='Imported' AND sg.status='Open'
     """, (source_project,), as_dict=True)
 
-    made, seg_for_v3 = 0, {}
+    # collect edits per target segment (a sentence may receive several)
+    edits_for, notes_for, seg_for_v3, edits_total, placed = {}, {}, {}, 0, 0
     for s in src:
-        seg = _match(s.en, s.v3mn)
-        if not seg:
+        for old_str, new_str in _edit_pairs(s.v3mn, s.sug):
+            edits_total += 1
+            hits = [name for name, cur in cur_of.items() if cur and old_str in cur]
+            if not hits or len(hits) > 3:
+                continue  # not locatable, or too generic to be safe
+            placed += 1
+            for name in hits:
+                edits_for.setdefault(name, []).append((old_str, new_str))
+                notes_for.setdefault(name, []).append("%s → %s" % (old_str, new_str))
+                seg_for_v3[s.v3seg] = name
+
+    made = 0
+    for name, edits in edits_for.items():
+        cur = cur_of.get(name) or ""
+        new = cur
+        for old_str, new_str in edits:
+            new = new.replace(old_str, new_str)
+        if new == cur:
             continue
-        seg_for_v3[s.v3seg] = seg.name
-        cur = seg.final_text or seg.ai_suggestion or seg.draft_text or ""
-        if _norm_mn(s.sug) == _norm_mn(cur):
-            continue  # nothing would change on the target
         frappe.get_doc({
             "doctype": "Translation Suggestion", "project": target_project,
-            "segment": seg.name, "origin": "Imported", "author": author,
-            "suggested_text": s.sug, "note": s.note or "", "status": "Open",
+            "segment": name, "origin": "Imported", "author": author,
+            "suggested_text": new, "status": "Open",
+            "note": "🔤 " + " · ".join(notes_for.get(name, [])[:3]),
         }).insert(ignore_permissions=True)
         made += 1
 
-    # bridge the redactor's comments on the same mapping (skip duplicates)
+    # bridge the redactor's comments by English match (skip duplicates)
     cmts = frappe.db.sql("""
-        SELECT c.content AS content, c.reference_name AS v3seg
+        SELECT c.content AS content, seg.source_text AS en, seg.name AS v3seg
         FROM `tabComment` c JOIN `tabTranslation Segment` seg ON seg.name = c.reference_name
         WHERE c.reference_doctype='Translation Segment' AND c.comment_type='Comment' AND seg.project=%s
     """, (source_project,), as_dict=True)
     cmade = 0
     for c in cmts:
-        tgt = seg_for_v3.get(c.v3seg)
-        if not tgt:
-            v3 = frappe.db.get_value("Translation Segment", c.v3seg, ["source_text", "draft_text"], as_dict=True)
-            seg = _match(v3.source_text, v3.draft_text) if v3 else None
-            tgt = seg.name if seg else None
+        tgt = seg_for_v3.get(c.v3seg) or en_map.get(_norm_en(c.en))
         if not tgt:
             continue
         if frappe.db.exists("Comment", {"reference_doctype": "Translation Segment",
@@ -560,8 +605,8 @@ def bridge_review(source_project="TRP-00003", target_project="TRP-00004", author
 
     frappe.db.commit()
     return {"source": source_project, "target": target_project,
-            "source_suggestions": len(src), "suggestions_created": made,
-            "comments_created": cmade}
+            "source_suggestions": len(src), "edits_found": edits_total,
+            "edits_placed": placed, "suggestions_created": made, "comments_created": cmade}
 
 
 @frappe.whitelist()
