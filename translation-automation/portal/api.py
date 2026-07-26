@@ -1854,28 +1854,53 @@ def revert_omissions(project):
 
 
 @frappe.whitelist()
-def faithfulness_audit(project, model="gpt-4o", batch=10):
-    """Flag human passages whose Mongolian DROPS content from the English source
-    (the condensation risk the omission audit can't see — a long EN sentence
-    rendered as a short MN one that quietly loses a fact/clause/number). Sets a
-    ⚠ note on each flagged segment (shown in the reading view) and writes a
-    summary report. Changes NO translation. Idempotent."""
+def faithfulness_audit(project, model="gpt-4o", batch=8):
+    """Flag translator passages whose Mongolian DROPS content from the English
+    source (the condensation risk the omission audit can't see — a long EN
+    sentence rendered as a short MN one that quietly loses a fact/clause/number).
+
+    Context-aware to avoid alignment false positives: rows whose English is
+    duplicated across many segments (cover/list splitting) are skipped, and each
+    English sentence is judged against a MONGOLIAN WINDOW (previous + current +
+    next rows) so content that drifted into a neighbouring row is not mistaken
+    for a drop. Sets a ⚠ note on each flagged segment (shown in the reading
+    view) and writes a summary report. Changes NO translation. Idempotent."""
     frappe.only_for("System Manager")
     frappe.enqueue("lac_translation.api._faithfulness_audit_job", queue="long", timeout=20000,
                    project=project, model=model, batch=int(batch))
     return {"queued": True}
 
 
-def _faithfulness_audit_job(project, model="gpt-4o", batch=10):
+def _faithfulness_audit_job(project, model="gpt-4o", batch=8):
+    from collections import Counter
     headers = _headers()
     batch = int(batch)
     segs = frappe.get_all("Translation Segment", filters={"project": project},
                           fields=["name", "seq", "chapter", "model", "source_text", "draft_text", "final_text"],
                           order_by="seq asc", limit_page_length=0)
-    # only the translator's own passages (skip AI-omission fills) that have an English source
-    items = [s for s in segs if (s.get("model") or "") != "AI-omission"
-             and (s.get("source_text") or "").strip()
-             and (s.get("final_text") or s.get("draft_text") or "").strip()]
+    # the translator's own passages only, in reading order (AI-omission fills excluded)
+    human = [s for s in segs if (s.get("model") or "") != "AI-omission"]
+
+    def mn(s):
+        return (s.get("final_text") or s.get("draft_text") or "").strip()
+
+    # English that repeats across rows = list/cover splitting artifact, not a
+    # reliable per-row source — exclude so we don't "miss" the sibling list items.
+    en_counts = Counter((s.get("source_text") or "").strip() for s in human if (s.get("source_text") or "").strip())
+
+    def window(i):
+        # current row's Mongolian plus its immediate neighbours in the same chapter
+        ch = human[i].get("chapter")
+        parts = [mn(human[j]) for j in (i - 1, i, i + 1)
+                 if 0 <= j < len(human) and human[j].get("chapter") == ch and mn(human[j])]
+        return " ".join(parts)
+
+    items = []  # (segment, english, mn_window)
+    for i, s in enumerate(human):
+        en = (s.get("source_text") or "").strip()
+        if not en or not mn(s) or en_counts[en] > 1:
+            continue
+        items.append((s, en, window(i)))
 
     # clear previous ⚠ flags (idempotent) — leave human reviewer notes untouched
     for n in frappe.get_all("Translation Segment",
@@ -1886,19 +1911,21 @@ def _faithfulness_audit_job(project, model="gpt-4o", batch=10):
     SYS = ("You are a meticulous bilingual editor checking a Mongolian book translation for "
            "COMPLETENESS against its English source.")
     instr = (
-        "For EACH numbered item decide whether the Mongolian (MN) conveys ALL the substantive "
-        "content of the English (EN): every fact, clause, number, name and claim. Mongolian is "
-        "naturally more compact, so DO NOT flag for brevity, style, word order or dropped filler. "
-        "Flag ONLY when specific meaningful content present in EN is genuinely ABSENT from MN.\n"
+        "Each item gives one English sentence (EN) and the surrounding Mongolian passage (MN) that "
+        "should contain its content. The Mongolian may use different wording or order, or split the "
+        "content across sentences — judge by MEANING over the WHOLE MN passage, not word-for-word, "
+        "and treat content as present if it appears anywhere in the MN passage. Mongolian is "
+        "naturally more compact, so DO NOT flag brevity, style, word order or dropped filler. Flag "
+        "ONLY when a specific fact, number, named entity or claim in EN has NO counterpart anywhere "
+        "in the MN passage.\n"
         'Return JSON {"items":[{"id":<int>,"complete":<true|false>,'
-        '"missing":"<one short Mongolian phrase naming exactly what is dropped; empty when complete>"}]} '
+        '"missing":"<short Mongolian phrase naming exactly what is absent; empty when complete>"}]} '
         "with exactly one element per id.")
 
     flagged, in_tok, out_tok, total = [], 0, 0, len(items)
-    for i in range(0, total, batch):
-        chunk = items[i:i + batch]
-        lines = ["[%d]\nEN: %s\nMN: %s" % (j, s["source_text"], s.get("final_text") or s.get("draft_text") or "")
-                 for j, s in enumerate(chunk)]
+    for b in range(0, total, batch):
+        chunk = items[b:b + batch]
+        lines = ["[%d]\nEN: %s\nMN passage: %s" % (k, en, win) for k, (s, en, win) in enumerate(chunk)]
         payload = {"model": model, "temperature": 0.0, "response_format": {"type": "json_object"},
                    "messages": [{"role": "system", "content": SYS},
                                 {"role": "user", "content": instr + "\n\nItems:\n" + "\n\n".join(lines)}]}
@@ -1910,30 +1937,32 @@ def _faithfulness_audit_job(project, model="gpt-4o", batch=10):
             by_id = {int(x["id"]): x for x in data.get("items", [])}
         except Exception:
             by_id = {}
-        for j, s in enumerate(chunk):
-            r = by_id.get(j)
+        for k, (s, en, win) in enumerate(chunk):
+            r = by_id.get(k)
             if r and not r.get("complete", True) and (r.get("missing") or "").strip():
                 frappe.db.set_value("Translation Segment", s["name"], "reviewer_comment", ("⚠ " + r["missing"].strip())[:500])
                 flagged.append({"seq": s["seq"], "chapter": s.get("chapter") or "", "missing": r["missing"].strip(),
-                                "en": s["source_text"], "mn": s.get("final_text") or s.get("draft_text")})
+                                "en": en, "mn": mn(s)})
         frappe.db.commit()
-        frappe.publish_realtime("lac_translation_progress", {"project": project, "done": min(i + batch, total), "total": total})
+        frappe.publish_realtime("lac_translation_progress", {"project": project, "done": min(b + batch, total), "total": total})
 
     from frappe.utils.file_manager import save_file
     rows = "".join("<tr><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s</td><td>%s</td></tr>" % (
         f["seq"], _esc(f["chapter"]), _esc(f["missing"]), _esc((f["en"] or "")[:400]), _esc((f["mn"] or "")[:400]))
         for f in flagged)
+    skipped_dupe = sum(1 for s in human if en_counts.get((s.get("source_text") or "").strip(), 0) > 1)
     html = ("<html><meta charset='utf-8'><body style='font-family:system-ui;font-size:14px'>"
-            "<h2>Faithfulness audit — %s</h2><p>Checked %d translator passages; flagged %d that may drop "
+            "<h2>Faithfulness audit — %s</h2><p>Checked %d translator passages (context-aware; %d "
+            "duplicated-English rows skipped as list/cover artifacts); flagged %d that may drop "
             "content vs the English. Each is also marked with a ⚠ note on its sentence in the portal.</p>"
             "<table border=1 cellpadding=6 style='border-collapse:collapse'>"
             "<tr><th>Seq</th><th>Chapter</th><th>Possibly dropped</th><th>English</th><th>Mongolian</th></tr>%s"
-            "</table></body></html>") % (project, total, len(flagged), rows)
+            "</table></body></html>") % (project, total, skipped_dupe, len(flagged), rows)
     save_file("faithfulness_audit_%s.html" % project, html.encode("utf-8"), "Translation Project", project, is_private=1)
     frappe.db.commit()
 
     cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
-    summary = {"checked": total, "flagged": len(flagged), "est_cost_usd": cost}
+    summary = {"checked": total, "skipped_duplicated_english": skipped_dupe, "flagged": len(flagged), "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False))
     return summary
 
