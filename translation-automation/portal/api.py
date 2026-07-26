@@ -1960,6 +1960,11 @@ def setup_reviewer(email, first_name="Reviewer", password=None):
                             "send_welcome_email": 0, "user_type": "System User"}).insert(ignore_permissions=True)
     # Reviewer gets EXACTLY this role and nothing else, so their access is
     # limited to the translation portal and its data — no other ERP module.
+    # Clear any Role Profile first: a profile enforces roles and would override
+    # our assignment on save.
+    u.role_profile_name = ""
+    if u.meta.has_field("role_profiles"):
+        u.set("role_profiles", [])
     u.set("roles", [])
     u.append("roles", {"role": role})
     u.user_type = "System User"
