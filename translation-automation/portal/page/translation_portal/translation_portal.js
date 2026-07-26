@@ -38,7 +38,6 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
             <button class="tp-mi" id="tpImportReviewDoc">⇄ Import redactor's review (Google Doc)</button>
             <button class="tp-mi" id="tpImport">＋ Import book (EN + MN)</button>
             <button class="tp-mi" id="tpImportReviewed">⇄ Import reviewed translation</button>
-            <button class="tp-mi" id="tpImportRev">⇄ Attach review to current book</button>
             <button class="tp-mi" id="tpRealign">🎯 Re-align source (EN↔MN)</button>
             <div class="tp-mi-sep"></div>
             <button class="tp-mi" id="tpAudit">🔎 Find missing passages (audit)</button>
@@ -588,7 +587,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   // core job) — we only hide the admin book-management tools (bulk AI generate,
   // import/align/audit/complete/export).
   if (!frappe.user.has_role('System Manager')) {
-    ['tpGen', 'tpImportReviewDoc', 'tpImport', 'tpImportReviewed', 'tpImportRev', 'tpRealign',
+    ['tpGen', 'tpImportReviewDoc', 'tpImport', 'tpImportReviewed', 'tpRealign',
      'tpAudit', 'tpComplete', 'tpRevert', 'tpTxt', 'tpDocx']
       .forEach(id => { const el = $id(id); if (el) el.style.display = 'none'; });
     document.querySelectorAll('#tpMenu .tp-mi-sep').forEach(el => { el.style.display = 'none'; });
@@ -699,20 +698,9 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     });
     d.show();
   };
-  $id('tpImportRev').onclick = () => {
-    if (!S.project) { frappe.msgprint('Pick a book first.'); return; }
-    const d = new frappe.ui.Dialog({
-      title: 'Import reviewer changes (comments + tracked changes)',
-      fields: [{ fieldname: 'file', fieldtype: 'Attach', label: 'Reviewed .docx (of the CURRENT book)', reqd: 1 },
-      { fieldname: 'hint', fieldtype: 'HTML', options: '<div style="font-size:12px;color:#888">Upload the reviewer\'s Word (.docx) of <b>the book selected above</b>. This <b>replaces</b> any earlier review (no duplicates): their edits attach as Accept/Reject cards and their comments attach to each sentence. Runs in the background.</div>' }],
-      primary_action_label: 'Import review',
-      primary_action(v) {
-        d.hide(); frappe.show_alert({ message: 'Importing review in the background — refresh in a moment…', indicator: 'blue' });
-        frappe.call({ method: 'lac_translation.api.reimport_review', args: { project: S.project, file_url: v.file } });
-      },
-    });
-    d.show();
-  };
+  // (Removed the old "Attach review to current book" button — it pasted whole
+  // paragraphs directly onto the selected book. Use "Import redactor's review
+  // (Google Doc)" instead, which stages + edit-extracts correctly.)
 
   function openTerms() {
     const isAdmin = frappe.user.has_role('System Manager');
