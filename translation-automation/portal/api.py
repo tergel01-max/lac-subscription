@@ -1022,11 +1022,33 @@ def _align_spans_job(project, english_file, band=200, write=1):
         return {"error": "no data"}
     en_vecs = np.array([_unit(v) for v in _embed(en_texts, headers)], dtype="float32")
     mn_vecs = np.array([_unit(v) for v in _embed(mn_texts, headers)], dtype="float32")
-    S = en_vecs @ mn_vecs.T                       # (N_en, P_mn) cosine
-    assign = _align_dp(S, band)                   # each English sentence -> Mongolian row (monotonic)
+    S = en_vecs @ mn_vecs.T                       # (N_en, P_mn) cosine, for boundary refinement
+    P, N = len(segs), len(en_texts)
+    # Surjective monotonic split: partition the English sentences into P contiguous
+    # groups (one per Mongolian row) so EVERY row gets its span. Size is proportional
+    # (~N/P sentences per row) with the exact boundary nudged by embedding similarity:
+    # keep extending the current row while the next sentence matches it at least as
+    # well as the following row. The remaining-sentence guard guarantees every later
+    # row still gets at least one sentence.
     groups = {}
-    for ei, (mj, _sc) in enumerate(assign):
-        groups.setdefault(mj, []).append(ei)
+    cursor = 0
+    for j in range(P):
+        rem_mn, rem_en = P - j, N - cursor
+        if rem_en <= 0:
+            break
+        if rem_mn == 1:
+            groups[j] = list(range(cursor, N)); cursor = N; break
+        base = rem_en / rem_mn
+        maxtake = max(2, int(base * 3) + 1)
+        take = 1
+        while take < maxtake and (cursor + take) < N and (rem_en - (take + 1)) >= (rem_mn - 1):
+            e = cursor + take
+            if float(S[e, j]) >= float(S[e, j + 1]):
+                take += 1
+            else:
+                break
+        groups[j] = list(range(cursor, cursor + take))
+        cursor += take
     wrote = multi = 0
     for j, s in enumerate(segs):
         if (s.get("model") or "") == "AI-omission":   # keep the exact English these were built from
