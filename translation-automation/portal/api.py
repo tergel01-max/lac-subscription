@@ -990,6 +990,67 @@ def _reset_alignment_job(project, clear_source=1):
     return {"reset": len(names)}
 
 
+@frappe.whitelist()
+def align_spans(project, english_file, band=200, write=1):
+    """Fix the English reference column so each Mongolian PARAGRAPH shows the
+    FULL span of English sentences it translates — not just the first one.
+
+    The translator writes long paragraphs; the old alignment paired each with a
+    single English sentence, so the panel looked far shorter than the Mongolian.
+    This assigns EVERY English sentence (from the source PDF) to the Mongolian
+    row it belongs to, monotonically in reading order, then sets each row's
+    source_text to the joined English span. Rewrites ONLY source_text on the
+    translator's rows (AI-fill rows keep the exact English they were generated
+    from); never touches the Mongolian translation, edits, comments or chapters."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._align_spans_job", queue="long", timeout=12000,
+                   project=project, english_file=english_file, band=int(band), write=int(write))
+    return {"queued": True}
+
+
+def _align_spans_job(project, english_file, band=200, write=1):
+    import numpy as np
+    headers = _headers()
+    band, write = int(band), int(write)
+    en = _clean_en_sentences(english_file)
+    en_texts = [e["text"] for e in en]
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "model", "draft_text", "final_text"],
+                          order_by="seq asc, creation asc", limit_page_length=0)
+    mn_texts = [(s.get("final_text") or s.get("draft_text") or "-") for s in segs]
+    if not en_texts or not segs:
+        return {"error": "no data"}
+    en_vecs = np.array([_unit(v) for v in _embed(en_texts, headers)], dtype="float32")
+    mn_vecs = np.array([_unit(v) for v in _embed(mn_texts, headers)], dtype="float32")
+    S = en_vecs @ mn_vecs.T                       # (N_en, P_mn) cosine
+    assign = _align_dp(S, band)                   # each English sentence -> Mongolian row (monotonic)
+    groups = {}
+    for ei, (mj, _sc) in enumerate(assign):
+        groups.setdefault(mj, []).append(ei)
+    wrote = multi = 0
+    for j, s in enumerate(segs):
+        if (s.get("model") or "") == "AI-omission":   # keep the exact English these were built from
+            continue
+        eis = groups.get(j)
+        if not eis:
+            continue
+        eis.sort()
+        if len(eis) > 1:
+            multi += 1
+        if write:
+            frappe.db.set_value("Translation Segment", s["name"],
+                                {"source_text": " ".join(en_texts[e] for e in eis)},
+                                update_modified=False)
+            wrote += 1
+            if j % 100 == 0:
+                frappe.db.commit()
+    frappe.db.commit()
+    summary = {"mn_rows": len(segs), "en_sentences": len(en_texts),
+               "rows_written": wrote, "rows_with_multi_sentence_english": multi, "wrote": bool(write)}
+    print(json.dumps(summary, ensure_ascii=False))
+    return summary
+
+
 # --------------------------------------------------------------------------
 # Alignment v2: clean -> sentence-split -> global banded DP over cross-lingual
 # embeddings, with a confidence gate. Replaces the old greedy _realign_job.
