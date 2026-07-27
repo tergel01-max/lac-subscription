@@ -990,6 +990,32 @@ def _reset_alignment_job(project, clear_source=1):
     return {"reset": len(names)}
 
 
+def _align_surjective(S):
+    """Monotonic content alignment of English sentences (rows of S) onto Mongolian
+    rows (cols). The path advances the Mongolian row by 0 or 1 per English sentence
+    (never skips), so every Mongolian row receives a contiguous English span while
+    boundaries stay locked to content (cosine in S). Returns list[len N] of Mn row."""
+    import numpy as np
+    N, P = S.shape
+    NEG = -1e18
+    dp = np.full(P, NEG); dp[0] = S[0, 0]
+    from_up = np.zeros((N, P), dtype=bool)
+    for e in range(1, N):
+        up = np.empty(P); up[0] = NEG; up[1:] = dp[:-1]      # came from row j-1
+        cu = up > dp                                          # else stay on row j
+        dp = np.where(cu, up, dp) + S[e]
+        from_up[e] = cu
+        jmin = max(0, P - 1 - (N - 1 - e)); jmax = min(P - 1, e)   # keep P-1 reachable at e=N-1
+        if jmin > 0: dp[:jmin] = NEG
+        if jmax < P - 1: dp[jmax + 1:] = NEG
+    j = P - 1; path = [0] * N
+    for e in range(N - 1, -1, -1):
+        path[e] = j
+        if e > 0 and from_up[e][j]:
+            j -= 1
+    return path
+
+
 @frappe.whitelist()
 def align_spans(project, english_file, band=200, write=1):
     """Fix the English reference column so each Mongolian PARAGRAPH shows the
@@ -1022,33 +1048,11 @@ def _align_spans_job(project, english_file, band=200, write=1):
         return {"error": "no data"}
     en_vecs = np.array([_unit(v) for v in _embed(en_texts, headers)], dtype="float32")
     mn_vecs = np.array([_unit(v) for v in _embed(mn_texts, headers)], dtype="float32")
-    S = en_vecs @ mn_vecs.T                       # (N_en, P_mn) cosine, for boundary refinement
-    P, N = len(segs), len(en_texts)
-    # Surjective monotonic split: partition the English sentences into P contiguous
-    # groups (one per Mongolian row) so EVERY row gets its span. Size is proportional
-    # (~N/P sentences per row) with the exact boundary nudged by embedding similarity:
-    # keep extending the current row while the next sentence matches it at least as
-    # well as the following row. The remaining-sentence guard guarantees every later
-    # row still gets at least one sentence.
+    S = en_vecs @ mn_vecs.T                       # (N_en, P_mn) cosine
+    path = _align_surjective(S)                   # content-based: each En sentence -> Mn row, step 0/1, every row used
     groups = {}
-    cursor = 0
-    for j in range(P):
-        rem_mn, rem_en = P - j, N - cursor
-        if rem_en <= 0:
-            break
-        if rem_mn == 1:
-            groups[j] = list(range(cursor, N)); cursor = N; break
-        base = rem_en / rem_mn
-        maxtake = max(2, int(base * 3) + 1)
-        take = 1
-        while take < maxtake and (cursor + take) < N and (rem_en - (take + 1)) >= (rem_mn - 1):
-            e = cursor + take
-            if float(S[e, j]) >= float(S[e, j + 1]):
-                take += 1
-            else:
-                break
-        groups[j] = list(range(cursor, cursor + take))
-        cursor += take
+    for e, j in enumerate(path):
+        groups.setdefault(j, []).append(e)
     wrote = multi = 0
     for j, s in enumerate(segs):
         if (s.get("model") or "") == "AI-omission":   # keep the exact English these were built from
