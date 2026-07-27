@@ -1077,6 +1077,86 @@ def _align_spans_job(project, english_file, band=200, write=1):
     return summary
 
 
+@frappe.whitelist()
+def align_llm(project, english_file, chunk=5, model="gpt-4o"):
+    """Accurate English↔Mongolian alignment using the model. Walks the book in
+    reading order with a sliding window of English sentences and, for each small
+    batch of Mongolian paragraphs, asks the model exactly which contiguous English
+    sentences each paragraph translates. Sets source_text per translator row to
+    that span. Content-driven + monotonic (won't drift like the embedding pass).
+    Rewrites only source_text — never the translation, edits, comments or chapters."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._align_llm_job", queue="long", timeout=30000,
+                   project=project, english_file=english_file, chunk=int(chunk), model=model)
+    return {"queued": True}
+
+
+def _align_llm_job(project, english_file, chunk=5, model="gpt-4o"):
+    headers = _headers()
+    chunk = int(chunk)
+    en_texts = [e["text"] for e in _clean_en_sentences(english_file)]
+    N = len(en_texts)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "model", "draft_text", "final_text"],
+                          order_by="seq asc, creation asc", limit_page_length=0)
+    P = len(segs)
+    if not N or not P:
+        return {"error": "no data"}
+
+    def mn(s):
+        return (s.get("final_text") or s.get("draft_text") or "").strip()
+
+    SYS = ("You align a Mongolian book translation to its English source. The Mongolian "
+           "paragraphs and English sentences are both given in reading order.")
+    cursor, wrote, in_tok, out_tok, i = 0, 0, 0, 0, 0
+    while i < P and cursor < N:
+        grp = segs[i:i + chunk]
+        WIN = chunk * 6 + 12
+        win = en_texts[cursor:cursor + WIN]
+        en_block = "\n".join("[%d] %s" % (k, t) for k, t in enumerate(win))
+        mn_block = "\n".join("(%d) %s" % (gi, mn(s)[:600] or "—") for gi, s in enumerate(grp))
+        instr = (
+            "Below are numbered English sentences (in order) and several Mongolian paragraphs (also "
+            "in order). For EACH Mongolian paragraph, give the CONTIGUOUS range of English sentence "
+            "numbers it translates — a paragraph usually spans several consecutive sentences. Ranges "
+            "must be non-decreasing across paragraphs and must not overlap. If a paragraph is a "
+            "heading, label or bare number with no English match, use null for both.\n"
+            'Return JSON {"items":[{"mn":<int>,"start":<int|null>,"end":<int|null>}]} — one per paragraph.\n\n'
+            "English sentences:\n" + en_block + "\n\nMongolian paragraphs:\n" + mn_block)
+        payload = {"model": model, "temperature": 0.0, "response_format": {"type": "json_object"},
+                   "messages": [{"role": "system", "content": SYS}, {"role": "user", "content": instr}]}
+        try:
+            resp = make_post_request("https://api.openai.com/v1/chat/completions",
+                                     headers=headers, data=json.dumps(payload))
+            data = json.loads(resp["choices"][0]["message"]["content"])
+            u = resp.get("usage", {}); in_tok += u.get("prompt_tokens", 0); out_tok += u.get("completion_tokens", 0)
+            items = {int(x["mn"]): x for x in data.get("items", []) if x.get("mn") is not None}
+        except Exception:
+            items = {}
+        maxend = cursor - 1
+        for gi, s in enumerate(grp):
+            x = items.get(gi)
+            if not x or x.get("start") is None or x.get("end") is None:
+                continue
+            st = cursor + int(x["start"]); ed = cursor + int(x["end"])
+            st = max(cursor, min(st, cursor + len(win) - 1))
+            ed = max(st, min(ed, cursor + len(win) - 1))
+            if (s.get("model") or "") != "AI-omission":
+                frappe.db.set_value("Translation Segment", s["name"],
+                                    {"source_text": " ".join(en_texts[st:ed + 1])}, update_modified=False)
+                wrote += 1
+            maxend = max(maxend, ed)
+        cursor = maxend + 1 if maxend >= cursor else cursor + chunk * 4   # advance past consumed English
+        i += chunk
+        frappe.db.commit()
+        frappe.publish_realtime("lac_translation_progress", {"project": project, "done": i, "total": P})
+
+    cost = round(in_tok / 1e6 * 2.5 + out_tok / 1e6 * 10.0, 4)
+    summary = {"mn_rows": P, "en_sentences": N, "rows_written": wrote, "est_cost_usd": cost}
+    print(json.dumps(summary, ensure_ascii=False))
+    return summary
+
+
 # --------------------------------------------------------------------------
 # Alignment v2: clean -> sentence-split -> global banded DP over cross-lingual
 # embeddings, with a confidence gate. Replaces the old greedy _realign_job.
