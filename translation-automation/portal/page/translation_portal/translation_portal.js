@@ -218,6 +218,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
   const myReviewerSug = mySug;
   function baseText(s) { return (s.final_text || s.ai_suggestion || s.draft_text || ''); }
 
+  function saveErr(e) { frappe.show_alert({ message: '⚠ Хадгалж чадсангүй / Save failed — refresh the page and log in again', indicator: 'red' }, 8); }
   // the one place a suggestion is written — used by both the left text and the right box
   function upsertMySug(name, txt) {
     const s = S.segs.find(x => x.name === name); if (!s) return;
@@ -228,7 +229,7 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
       updateChangeInfo(); return;
     }
     if (mine) {
-      if (mine.suggested_text !== txt) { mine.suggested_text = txt; frappe.db.set_value('Translation Suggestion', mine.name, { suggested_text: txt }); }
+      if (mine.suggested_text !== txt) { mine.suggested_text = txt; frappe.db.set_value('Translation Suggestion', mine.name, { suggested_text: txt }).catch(saveErr); }
     } else if (!sugCreating[name]) {                    // create once, then reconcile to the latest typed text
       sugCreating[name] = true;
       frappe.call({ method: 'frappe.client.insert', args: { doc: { doctype: 'Translation Suggestion', project: S.project, segment: name, origin: 'Reviewer', author: frappe.session.user, suggested_text: txt, status: 'Open' } } })
@@ -237,7 +238,8 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
           if (!latest || latest === base) { frappe.call({ method: 'frappe.client.delete', args: { doctype: 'Translation Suggestion', name: d.name } }); }
           else { S.suggestions.push({ name: d.name, segment: name, origin: 'Reviewer', author: frappe.session.user, suggested_text: latest, status: 'Open' }); if (latest !== txt) frappe.db.set_value('Translation Suggestion', d.name, { suggested_text: latest }); }
           updateChangeInfo();
-        });
+        })
+        .catch(e => { sugCreating[name] = false; saveErr(e); });
     }
     updateChangeInfo();
   }
@@ -301,7 +303,8 @@ frappe.pages['translation-portal'].on_page_load = function (wrapper) {
     const curCard = `<div class="tp-card"><div class="lbl"><span class="name">Current translation</span></div><div class="body">${esc(cur) || '<span class="nochange">— (no translation yet)</span>'}</div></div>`;
     const acceptBtn = isAdmin ? `<button class="tp-btn primary" data-act="acceptmine" style="padding:3px 10px;font-size:12px">✔ Accept</button>` : '';
     const removeBtn = mine ? `<button class="tp-btn ghost" data-act="delsug" data-sug="${mine.name}" style="padding:3px 9px;font-size:12px">Remove</button>` : '';
-    const suggestCard = `<div class="tp-card suggest"><div class="lbl"><span class="name">✎ Suggested edit — saves automatically</span><span style="display:flex;gap:6px">${acceptBtn}${removeBtn}</span></div><div class="body" style="padding:0"><textarea class="tp-suggest" placeholder="Type your change here or in the book text — it saves as you type and shows green/red.">${esc(myText)}</textarea></div><div class="tp-sugdiff">${liveDiff}</div></div>`;
+    const saveSugBtn = `<button class="tp-btn primary" data-act="savesug" style="padding:3px 12px;font-size:12px">💾 Save</button>`;
+    const suggestCard = `<div class="tp-card suggest"><div class="lbl"><span class="name">✎ Suggested edit</span><span style="display:flex;gap:6px">${saveSugBtn}${acceptBtn}${removeBtn}</span></div><div class="body" style="padding:0"><textarea class="tp-suggest" placeholder="Type your change, then press 💾 Save (it also autosaves as you type).">${esc(myText)}</textarea></div><div class="tp-sugdiff">${liveDiff}</div></div>`;
     const othersHtml = others.map(su => `<div class="tp-card sug"><div class="lbl"><span class="name">${su.origin === 'Imported' ? 'Imported change' : 'Also suggested'}${su.author ? ' · ' + esc(su.author) : ''}</span>${isAdmin ? `<span style="display:flex;gap:6px"><button class="tp-btn primary" data-act="acceptsug" data-sug="${su.name}" style="padding:3px 9px;font-size:12px">✔ Accept</button><button class="tp-btn" data-act="rejectsug" data-sug="${su.name}" style="padding:3px 9px;font-size:12px">Reject</button></span>` : ''}</div><div class="body"><div class="diff">${diff(cur, su.suggested_text)}</div></div>${su.note ? `<div class="notes"><span>${esc(su.note)}</span></div>` : ''}</div>`).join('');
     // faithfulness flag: the AI thinks this passage may drop content vs the English
     const flagBar = (s.reviewer_comment || '').trim().startsWith('⚠') ? `<div class="tp-flagbar">${esc(s.reviewer_comment)} <span style="opacity:.75;font-weight:400">— check the English above; expand the translation if this detail is missing.</span></div>` : '';
