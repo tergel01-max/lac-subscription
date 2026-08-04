@@ -2830,21 +2830,31 @@ def _quality_pass_job(project, model="gpt-5.6-luna", batch=6, from_seq=None, to_
              "with exactly one element per id.")
     INSTR_A = (
         "Each item has: EN = one English source sentence; MN = the translator's Mongolian for it; "
-        "CTX = the surrounding Mongolian passage.\n"
-        "FAITHFUL: judging MN together with CTX, is EN's meaning conveyed with nothing important "
-        "ADDED, DROPPED or DISTORTED? Treat a fact/number/name/claim as present if it appears "
-        "anywhere in MN or CTX, in any wording or order. Set faithful=false ONLY for a real "
-        "added/dropped/wrong fact — not for compactness or omitted filler.\n"
-        "FLUENT: is MN natural, grammatical, publication-quality Mongolian — NOT a wooden word-for-"
-        "word calque, NOT machine-literal, NOT so over-condensed that it reads awkwardly or loses "
-        "sense? Set fluent=false for wording a book redactor should polish.\n"
-        "severity: 'none' if faithful AND fluent; 'minor' for wording/polish; 'major' for a real "
-        "faithfulness error or badly broken Mongolian." + SHAPE)
+        "CTX = the surrounding Mongolian passage. Judge ONLY these two things.\n\n"
+        "1) FAITHFUL — is EN's meaning present in MN (or its CTX)? Treat a fact/number/name/claim as "
+        "present if it appears anywhere in MN or CTX, in any wording or order. Set faithful=false "
+        "ONLY when a specific fact/number/name/claim in EN is MISSING from both MN and CTX, or is "
+        "CONTRADICTED / MISTRANSLATED to the wrong meaning.\n"
+        "   CRITICAL: the book is split into small rows, so MN legitimately often contains MORE than "
+        "this one EN sentence (content from neighbouring sentences). NEVER set faithful=false, and "
+        "NEVER suggest deleting or removing text, merely because MN says more than EN. Extra "
+        "Mongolian content is expected and correct — ignore it entirely.\n\n"
+        "2) FLUENT — is MN natural, grammatical, publication Mongolian? Set fluent=false for: garbled "
+        "or nonsense tokens (e.g. a stray letter fused to a word like 'элфитонутриент', 'уФитохими', "
+        "'Туспаа'), spelling / grammar / case-ending errors, or a wooden word-for-word calque that "
+        "mistranslates an idiom or term (e.g. 'magistral work' rendered literally). Do NOT flag "
+        "acceptable style, compactness, or word order.\n\n"
+        "severity: 'none' if faithful AND fluent; 'minor' for wording/spelling/grammar to polish; "
+        "'major' for a real faithfulness error (missing/wrong fact) or badly broken Mongolian.\n"
+        "problem: short Mongolian naming the issue. fix: the corrected Mongolian wording only — NEVER "
+        "instruct to delete/remove content; empty if none." + SHAPE)
     INSTR_B = (
-        "You are RE-CHECKING suspected FAITHFULNESS errors to remove false alarms. Each item has "
-        "EN, MN and the full CTX passage. Search MN and CTX carefully. Keep faithful=false ONLY if a "
-        "specific element of EN (a fact, number, name or claim) is wrong or wholly absent from BOTH "
-        "MN and CTX, and name it. If every substantive element appears anywhere in MN or CTX in any "
+        "You are RE-CHECKING suspected FAITHFULNESS errors to remove false alarms. Each item has EN, "
+        "MN and the full CTX passage. Keep faithful=false ONLY if a specific element of EN (a fact, "
+        "number, name or claim) is genuinely MISSING from BOTH MN and CTX, or is clearly "
+        "MISTRANSLATED to the wrong meaning — and name it.\n"
+        "The book is split into rows: if MN merely contains EXTRA content beyond EN, that is NOT an "
+        "error — answer faithful=true. If every element of EN appears somewhere in MN or CTX in any "
         "wording, answer faithful=true. When in doubt, faithful=true." + SHAPE)
 
     usage = {"in": 0, "out": 0}
