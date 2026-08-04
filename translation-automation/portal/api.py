@@ -2699,3 +2699,254 @@ def _fix_chapter_labels_job(project, model="gpt-4o"):
             frappe.db.commit()
     frappe.db.commit()
     return {"relabeled_segments": len(updates)}
+
+
+# --------------------------------------------------------------------------- #
+# publication quality pass (faithfulness + fluency), Luna-friendly
+# --------------------------------------------------------------------------- #
+def _loads_lenient(txt):
+    """Parse JSON from a model reply that may be fenced or have leading prose."""
+    t = (txt or "").strip()
+    if t.startswith("```"):
+        t = t.strip("`")
+        if t[:4].lower() == "json":
+            t = t[4:]
+    a, b = t.find("{"), t.rfind("}")
+    if a != -1 and b != -1 and b > a:
+        t = t[a:b + 1]
+    return json.loads(t)
+
+
+def _qa_chat(model, headers, system, user):
+    """Chat call that tolerates reasoning-style models (e.g. gpt-5.6-luna) which
+    may reject temperature or response_format. Tries richest payload first, then
+    degrades. Returns (parsed_json, usage)."""
+    base = {"model": model,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}]}
+    last = None
+    for extra in ({"temperature": 0.0, "response_format": {"type": "json_object"}},
+                  {"response_format": {"type": "json_object"}},
+                  {}):
+        try:
+            p = dict(base); p.update(extra)
+            resp = make_post_request("https://api.openai.com/v1/chat/completions",
+                                     headers=headers, data=json.dumps(p))
+            return _loads_lenient(resp["choices"][0]["message"]["content"]), resp.get("usage", {})
+        except Exception as e:
+            last = e
+    raise last
+
+
+@frappe.whitelist()
+def quality_pass(project, model="gpt-5.6-luna", batch=6, from_seq=None, to_seq=None, limit=None):
+    """Publication QA of the translator's Mongolian against the English source.
+
+    For every real prose passage an LLM book-editor judges TWO things:
+      - FAITHFULNESS: MN (with its context) conveys EN with nothing important
+        added, dropped or distorted (the 'made it shorter / lost a fact' risk);
+      - FLUENCY: natural, publication-quality Mongolian, not a wooden/word-for-
+        word calque or over-condensed ('bad wording' the redactor must polish).
+
+    Faithfulness flags (alignment-sensitive, the source of past false alarms) are
+    re-checked by a strict second pass; fluency/wording flags pass through since
+    they judge the Mongolian text itself. Flagged rows get a 🔎 note (shown in the
+    reading view) and a summary report is saved. Changes NO translation.
+    Idempotent: only touches the rows it processes, replacing prior 🔎/⚠ notes and
+    preserving genuine human comments. Range with from_seq/to_seq/limit."""
+    frappe.only_for("System Manager")
+    frappe.enqueue("lac_translation.api._quality_pass_job", queue="long", timeout=36000,
+                   project=project, model=model, batch=int(batch),
+                   from_seq=from_seq, to_seq=to_seq, limit=limit)
+    return {"queued": True}
+
+
+# chapters that are front/back matter or list/index pages — not prose to QA
+_QA_SKIP_CH = {
+    "table of contents:", "table of contents", "index", "literature", "front matter",
+    "about the author", "masquelier", "dr. jack masquelier’s mark on health",
+}
+
+
+def _quality_pass_job(project, model="gpt-5.6-luna", batch=6, from_seq=None, to_seq=None, limit=None):
+    from collections import Counter
+    headers = _headers()
+    batch = int(batch)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "chapter", "model", "reviewer_comment",
+                                  "source_text", "draft_text", "final_text"],
+                          order_by="seq asc", limit_page_length=0)
+    human = [s for s in segs if (s.get("model") or "") != "AI-omission"]
+
+    def mn(s):
+        return (s.get("final_text") or s.get("draft_text") or "").strip()
+
+    en_counts = Counter((s.get("source_text") or "").strip()
+                        for s in human if (s.get("source_text") or "").strip())
+
+    def window(i):
+        ch = human[i].get("chapter")
+        parts = [mn(human[j]) for j in (i - 1, i, i + 1)
+                 if 0 <= j < len(human) and human[j].get("chapter") == ch and mn(human[j])]
+        return " ".join(parts)
+
+    def is_datacell(mn_text, en_text):
+        letters = re.sub(r"[^A-Za-zА-Яа-яӨөҮүЁё]", "", mn_text)
+        if len(letters) < 12:
+            return True
+        if re.search(r"\bLot\s*\d|\bmg\s*/\s*kg|\bkg\s*/\s*day|\bg\s*/\s*l\b", en_text or "", re.I):
+            return True
+        d = sum(c.isdigit() for c in en_text)
+        return bool(en_text) and d / len(en_text) > 0.20
+
+    fs = int(from_seq) if from_seq not in (None, "") else None
+    ts = int(to_seq) if to_seq not in (None, "") else None
+    items = []  # (index_in_human, segment, english, mn_this, mn_window)
+    for i, s in enumerate(human):
+        if fs is not None and s["seq"] < fs:
+            continue
+        if ts is not None and s["seq"] > ts:
+            continue
+        if (s.get("chapter") or "").strip().lower() in _QA_SKIP_CH:
+            continue
+        en = (s.get("source_text") or "").strip()
+        m = mn(s)
+        if not en or not m or en_counts[en] > 1:
+            continue
+        if is_datacell(m, en):
+            continue
+        items.append((i, s, en, m, window(i)))
+    if limit not in (None, ""):
+        items = items[:int(limit)]
+
+    SYS = ("You are a meticulous bilingual book editor preparing the OFFICIAL Mongolian "
+           "edition of an English medical/nutrition book. You judge an existing Mongolian "
+           "translation for FAITHFULNESS and FLUENCY. Mongolian is naturally more compact "
+           "and reorders content; never penalise brevity, different wording, or style alone.")
+    SHAPE = ('\nReturn JSON {"items":[{"id":<int>,"faithful":<true|false>,"fluent":<true|false>,'
+             '"severity":"none|minor|major",'
+             '"problem":"<short Mongolian: what is wrong; empty if fine>",'
+             '"fix":"<short Mongolian: the corrected wording or a concrete instruction; empty if fine>"}]} '
+             "with exactly one element per id.")
+    INSTR_A = (
+        "Each item has: EN = one English source sentence; MN = the translator's Mongolian for it; "
+        "CTX = the surrounding Mongolian passage.\n"
+        "FAITHFUL: judging MN together with CTX, is EN's meaning conveyed with nothing important "
+        "ADDED, DROPPED or DISTORTED? Treat a fact/number/name/claim as present if it appears "
+        "anywhere in MN or CTX, in any wording or order. Set faithful=false ONLY for a real "
+        "added/dropped/wrong fact — not for compactness or omitted filler.\n"
+        "FLUENT: is MN natural, grammatical, publication-quality Mongolian — NOT a wooden word-for-"
+        "word calque, NOT machine-literal, NOT so over-condensed that it reads awkwardly or loses "
+        "sense? Set fluent=false for wording a book redactor should polish.\n"
+        "severity: 'none' if faithful AND fluent; 'minor' for wording/polish; 'major' for a real "
+        "faithfulness error or badly broken Mongolian." + SHAPE)
+    INSTR_B = (
+        "You are RE-CHECKING suspected FAITHFULNESS errors to remove false alarms. Each item has "
+        "EN, MN and the full CTX passage. Search MN and CTX carefully. Keep faithful=false ONLY if a "
+        "specific element of EN (a fact, number, name or claim) is wrong or wholly absent from BOTH "
+        "MN and CTX, and name it. If every substantive element appears anywhere in MN or CTX in any "
+        "wording, answer faithful=true. When in doubt, faithful=true." + SHAPE)
+
+    usage = {"in": 0, "out": 0}
+
+    def as_lines(chunk):
+        return "\n\n".join(
+            "[%d]\nEN: %s\nMN: %s\nCTX: %s" % (k, en, m, win)
+            for k, (_i, _s, en, m, win) in enumerate(chunk))
+
+    def pass_a(triples):
+        """-> dict k->verdict over the whole list (batched)."""
+        verdicts = {}
+        n = len(triples)
+        for b in range(0, n, batch):
+            chunk = triples[b:b + batch]
+            try:
+                data, u = _qa_chat(model, headers, SYS, INSTR_A + "\n\nItems:\n" + as_lines(chunk))
+                usage["in"] += u.get("prompt_tokens", 0); usage["out"] += u.get("completion_tokens", 0)
+                by_id = {int(x["id"]): x for x in data.get("items", [])}
+            except Exception:
+                by_id = {}
+            for k in range(len(chunk)):
+                verdicts[b + k] = by_id.get(k) or {}
+            frappe.publish_realtime("lac_translation_progress",
+                                    {"project": project, "done": min(b + batch, n), "total": n})
+        return verdicts
+
+    def pass_b(idxs, triples):
+        """Strict re-check of the given global indices; -> set of confirmed-unfaithful."""
+        confirmed = set()
+        sub = [triples[k] for k in idxs]
+        for b in range(0, len(sub), batch):
+            chunk = sub[b:b + batch]
+            keys = idxs[b:b + batch]
+            try:
+                data, u = _qa_chat(model, headers, SYS, INSTR_B + "\n\nItems:\n" + as_lines(chunk))
+                usage["in"] += u.get("prompt_tokens", 0); usage["out"] += u.get("completion_tokens", 0)
+                by_id = {int(x["id"]): x for x in data.get("items", [])}
+            except Exception:
+                by_id = {}
+            for j, gk in enumerate(keys):
+                r = by_id.get(j)
+                if r and r.get("faithful") is False:
+                    confirmed.add(gk)
+        return confirmed
+
+    va = pass_a(items)
+    unfaithful_idx = [k for k, v in va.items() if v.get("faithful") is False]
+    confirmed = pass_b(unfaithful_idx, items) if unfaithful_idx else set()
+
+    flagged = []
+    for k, (_i, s, en, m, win) in enumerate(items):
+        v = va.get(k) or {}
+        bad_faith = k in confirmed
+        bad_fluent = (v.get("fluent") is False) and (v.get("severity") != "none")
+        prob = (v.get("problem") or "").strip()
+        fix = (v.get("fix") or "").strip()
+        prior = (s.get("reviewer_comment") or "").strip()
+        auto = prior.startswith("🔎") or prior.startswith("⚠") or not prior
+        note = ""
+        if bad_faith:
+            note = "🔎 [гажилт] " + (prob or "Эх бичвэрийн мэдээлэл дутуу/зөрүүтэй.")
+        elif bad_fluent:
+            note = "🔎 [найруулга] " + (prob or "Орчуулгын найруулга/үг сонголт засах шаардлагатай.")
+        if note and fix:
+            note = (note + " — Засах: " + fix)
+        note = note[:490]
+        # only overwrite auto-notes/empties; keep genuine human comments
+        if auto and (note or prior):
+            frappe.db.set_value("Translation Segment", s["name"], "reviewer_comment", note,
+                                update_modified=False)
+        if note:
+            flagged.append({"seq": s["seq"], "chapter": s.get("chapter") or "",
+                            "kind": "гажилт" if bad_faith else "найруулга",
+                            "severity": "major" if bad_faith else (v.get("severity") or "minor"),
+                            "problem": prob, "fix": fix, "en": en, "mn": m})
+    frappe.db.commit()
+
+    flagged.sort(key=lambda f: (0 if f["kind"] == "гажилт" else 1, f["seq"]))
+    from frappe.utils.file_manager import save_file
+    rows = "".join(
+        "<tr><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+            f["seq"], _esc(f["chapter"]), f["kind"], _esc(f["problem"]), _esc(f["fix"]),
+            _esc((f["en"] or "")[:400]), _esc((f["mn"] or "")[:400]))
+        for f in flagged)
+    n_faith = sum(1 for f in flagged if f["kind"] == "гажилт")
+    n_flu = len(flagged) - n_faith
+    html = ("<html><meta charset='utf-8'><body style='font-family:system-ui;font-size:14px'>"
+            "<h2>Quality pass — %s (%s)</h2><p>Checked %d prose passages. "
+            "<b>%d</b> faithfulness issues (verified by a strict second pass) and <b>%d</b> "
+            "wording/fluency issues flagged; each is marked with a 🔎 note on its sentence.</p>"
+            "<table border=1 cellpadding=6 style='border-collapse:collapse'>"
+            "<tr><th>Seq</th><th>Chapter</th><th>Type</th><th>Problem</th><th>Fix</th>"
+            "<th>English</th><th>Mongolian</th></tr>%s</table></body></html>") % (
+        project, model, len(items), n_faith, n_flu, rows)
+    save_file("quality_pass_%s.html" % project, html.encode("utf-8"),
+              "Translation Project", project, is_private=1)
+    frappe.db.commit()
+
+    cost = round(usage["in"] / 1e6 * 0.5 + usage["out"] / 1e6 * 1.5, 4)
+    summary = {"model": model, "checked": len(items), "faithfulness_flags": n_faith,
+               "fluency_flags": n_flu, "total_flags": len(flagged),
+               "tokens_in": usage["in"], "tokens_out": usage["out"], "est_cost_usd": cost}
+    print(json.dumps(summary, ensure_ascii=False))
+    return summary
