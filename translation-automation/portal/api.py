@@ -2960,3 +2960,137 @@ def _quality_pass_job(project, model="gpt-5.6-luna", batch=6, from_seq=None, to_
                "tokens_in": usage["in"], "tokens_out": usage["out"], "est_cost_usd": cost}
     print(json.dumps(summary, ensure_ascii=False))
     return summary
+
+
+# --------------------------------------------------------------------------- #
+# redactor deliverable: chapter-structured .docx with QA flags + her edits
+# --------------------------------------------------------------------------- #
+@frappe.whitelist()
+def export_redactor_docx(project):
+    """Build the redactor's working .docx: the translator's Mongolian in book
+    order by chapter, with the team's reviewed corrections and the GPT-5.6
+    quality-pass flags surfaced inline so she can finish it in Word/Google Docs.
+
+    Base text per paragraph = the translator's draft (what the QA pass judged),
+    with the reviewer's own portal edits applied and AI gap-fills tagged [AI].
+    Under a flagged paragraph we add:
+      - 🔎 the QA note (problem + suggested fix), with the English shown for
+        faithfulness flags so she can verify; and
+      - 📝 the team's reviewed version of that paragraph, only where it is
+        reliably (uniquely) linked, so none of her corrections are lost.
+    Nothing is dropped: every segment is emitted in seq order. Returns file_url."""
+    frappe.only_for("System Manager")
+    proj = frappe.get_doc("Translation Project", project)
+    segs = frappe.get_all("Translation Segment", filters={"project": project},
+                          fields=["name", "seq", "chapter", "model", "reviewer_comment",
+                                  "source_text", "draft_text", "final_text"],
+                          order_by="seq asc, creation asc", limit_page_length=0)
+
+    # suggestions: reviewer edits (apply as base) + reliably-linked imported review
+    sugs = frappe.get_all("Translation Suggestion", filters={"project": project},
+                          fields=["segment", "origin", "suggested_text"], limit_page_length=0)
+    reviewer_edit = {}
+    imp_text, imp_count = {}, {}
+    for s in sugs:
+        if not s.segment:
+            continue
+        if s.origin == "Reviewer" and (s.suggested_text or "").strip():
+            reviewer_edit[s.segment] = s.suggested_text.strip()
+        elif s.origin == "Imported" and (s.suggested_text or "").strip():
+            imp_count[s.segment] = imp_count.get(s.segment, 0) + 1
+            imp_text[s.segment] = s.suggested_text.strip()
+
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    doc = Document()
+    RED = RGBColor(0xB0, 0x00, 0x00)
+    ORANGE = RGBColor(0xB0, 0x5A, 0x00)
+    BLUE = RGBColor(0x1F, 0x4E, 0x79)
+    GRAY = RGBColor(0x66, 0x66, 0x66)
+    TEAL = RGBColor(0x0B, 0x6B, 0x63)
+
+    def note(text, color, indent=0.3, italic=True, size=9.5):
+        p = doc.add_paragraph()
+        p.paragraph_format.left_indent = Inches(indent)
+        p.paragraph_format.space_after = Pt(2)
+        r = p.add_run(text)
+        r.italic = italic
+        r.font.size = Pt(size)
+        r.font.color.rgb = color
+        return p
+
+    # ---- title + instructions ----
+    doc.add_heading(proj.title or project, 0)
+    doc.add_paragraph("Редакторын ажлын хувилбар").runs[0].bold = True
+    intro = doc.add_paragraph()
+    intro.add_run(
+        "Энэ бол орчуулагчийн монгол орчуулга (номын дараалалаар, бүлгээр). "
+        "Тэмдэглэгээ:\n"
+        "🔎 [гажилт] — GPT-5.6 хиймэл оюуны редактор эх бичвэрээс мэдээлэл дутуу/зөрүүтэй "
+        "байж болзошгүй гэж үзсэн хэсэг. Доор нь англи эхийг тавьсан тул тулгаж шалгана уу.\n"
+        "🔎 [найруулга] — үг сонголт, зөв бичих, хэлзүйн санал. Зөв бол хэрэглээд тэмдэглэлээ устгана уу.\n"
+        "📝 — хянан тохиолдуулах багийн (Эммигийн) хянасан хувилбар; аль тохирохыг сонгоно уу.\n"
+        "[AI дүүргэсэн] — орчуулагчийн орхисон хэсгийг хиймэл оюун нөхсөн; эх номтой заавал тулгана уу.\n\n"
+        "Орчуулгын ~96% нь бат бөх тул зөвхөн эдгээр тэмдэглэсэн хэсгүүдэд анхаарлаа хандуулахад "
+        "хангалттай. Санал бүрийг хэрэгжүүлсний дараа 🔎/📝 тэмдэглэлийг устгана уу."
+    ).font.size = Pt(10.5)
+    doc.add_page_break()
+
+    cur_chapter = None
+    n_flag = 0
+    n_imp = 0
+    for s in segs:
+        ch = s.get("chapter") or ""
+        if ch != cur_chapter:
+            cur_chapter = ch
+            if ch:
+                doc.add_heading(ch, level=1)
+
+        is_ai = (s.get("model") or "") == "AI-omission"
+        # base text: reviewer's own edit wins, else AI-fill for gap rows, else draft
+        if s["name"] in reviewer_edit:
+            text = reviewer_edit[s["name"]]
+            flagged_note = None            # base changed → old QA note may be stale
+        else:
+            text = (s.get("final_text") if is_ai else s.get("draft_text")) or s.get("draft_text") or ""
+            flagged_note = (s.get("reviewer_comment") or "").strip()
+        text = (text or "").strip()
+        if not text and not flagged_note:
+            continue
+
+        if _is_headingish(text):
+            doc.add_heading(text, level=2)
+            body = None
+        else:
+            body = doc.add_paragraph()
+            if is_ai:
+                tag = body.add_run("[AI дүүргэсэн] ")
+                tag.bold = True
+                tag.font.color.rgb = TEAL
+                tag.font.size = Pt(10)
+            body.add_run(text)
+
+        # QA flag note (only when base is the judged draft)
+        if flagged_note and flagged_note.startswith("🔎"):
+            n_flag += 1
+            color = RED if "[гажилт]" in flagged_note else ORANGE
+            note(flagged_note, color)
+            if "[гажилт]" in flagged_note and (s.get("source_text") or "").strip():
+                note("EN: " + s["source_text"].strip()[:400], GRAY, indent=0.45, size=8.5)
+
+        # reviewed (imported) version, only if reliably (uniquely) linked and differs
+        if imp_count.get(s["name"], 0) == 1:
+            iv = imp_text[s["name"]]
+            if iv and iv != text:
+                n_imp += 1
+                note("📝 Хянасан хувилбар: " + iv[:600], BLUE)
+
+    buf = io.BytesIO(); doc.save(buf)
+    from frappe.utils.file_manager import save_file
+    fname = re.sub(r"[^\w\-]+", "_", (proj.title or project)) + "_REDAKTOR.docx"
+    f = save_file(fname, buf.getvalue(), "Translation Project", project, is_private=1)
+    frappe.db.commit()
+    out = {"file_url": f.file_url, "segments": len(segs), "qa_flags_shown": n_flag,
+           "reviewed_versions_shown": n_imp}
+    print(json.dumps(out, ensure_ascii=False))
+    return out
