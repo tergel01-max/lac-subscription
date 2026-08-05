@@ -3009,18 +3009,23 @@ def export_redactor_docx(project):
     GRAY = RGBColor(0x66, 0x66, 0x66)
     TEAL = RGBColor(0x0B, 0x6B, 0x63)
 
+    def X(t):
+        # strip XML-illegal control chars (PDF extraction leaves some) so
+        # python-docx / lxml can serialise the text
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", t or "")
+
     def note(text, color, indent=0.3, italic=True, size=9.5):
         p = doc.add_paragraph()
         p.paragraph_format.left_indent = Inches(indent)
         p.paragraph_format.space_after = Pt(2)
-        r = p.add_run(text)
+        r = p.add_run(X(text))
         r.italic = italic
         r.font.size = Pt(size)
         r.font.color.rgb = color
         return p
 
     # ---- title + instructions ----
-    doc.add_heading(proj.title or project, 0)
+    doc.add_heading(X(proj.title or project), 0)
     doc.add_paragraph("Редакторын ажлын хувилбар").runs[0].bold = True
     intro = doc.add_paragraph()
     intro.add_run(
@@ -3044,7 +3049,7 @@ def export_redactor_docx(project):
         if ch != cur_chapter:
             cur_chapter = ch
             if ch:
-                doc.add_heading(ch, level=1)
+                doc.add_heading(X(ch), level=1)
 
         is_ai = (s.get("model") or "") == "AI-omission"
         # base text: reviewer's own edit wins, else AI-fill for gap rows, else draft
@@ -3054,7 +3059,7 @@ def export_redactor_docx(project):
         else:
             text = (s.get("final_text") if is_ai else s.get("draft_text")) or s.get("draft_text") or ""
             flagged_note = (s.get("reviewer_comment") or "").strip()
-        text = (text or "").strip()
+        text = X((text or "").strip())
         if not text and not flagged_note:
             continue
 
