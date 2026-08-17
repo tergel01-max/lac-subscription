@@ -1,511 +1,495 @@
-<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
-<html>
+<!doctype html>
+<html lang="mn">
 <head>
-  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-  <meta http-equiv="Content-Style-Type" content="text/css">
-  <title></title>
-  <meta name="Generator" content="Cocoa HTML Writer">
-  <meta name="CocoaVersion" content="2685.3">
-  <style type="text/css">
-    p.p1 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px Helvetica}
-    p.p2 {margin: 0.0px 0.0px 0.0px 0.0px; font: 12.0px Helvetica; min-height: 14.0px}
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LAC Subscription A4 (Front + Back)</title>
+
+  <style>
+    @page { size: A4; margin: 12mm; }
+
+    :root{
+      --lac-teal: #004F59;
+      --lac-teal-2: #008EAA;
+      --lac-gold: #FFB81C;
+      --ink: #111;
+      --muted: #444;
+      --light: #666;
+      --line: #D6D6D6;
+      --bg-soft: #F7F9FA;
+    }
+
+    *{ box-sizing: border-box; }
+    html, body{
+      margin:0; padding:0;
+      color: var(--ink);
+      font-family: "Cambria", "Georgia", "Times New Roman", serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .page{
+      page-break-after: always;
+      position: relative;
+      min-height: calc(297mm - 24mm);
+      display: flex;
+      flex-direction: column;
+      gap: 10mm;
+    }
+    .page:last-child{ page-break-after: auto; }
+
+    .topbar{
+      display:flex;
+      align-items:flex-start;
+      justify-content: space-between;
+      gap: 8mm;
+      padding-bottom: 5mm;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .logo{
+      width: 42mm;
+      height: 14mm;
+      border: 1px solid var(--line);
+      border-radius: 3mm;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:700;
+      letter-spacing: .06em;
+      color: var(--lac-teal);
+      font-family: Arial, sans-serif;
+      font-size: 12pt;
+    }
+
+    .doc-meta{
+      text-align:right;
+      line-height: 1.2;
+      font-family: Arial, sans-serif;
+      color: var(--muted);
+      font-size: 9.5pt;
+    }
+    .doc-meta .tag{
+      display:inline-block;
+      padding: 1.5mm 3mm;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 9pt;
+      margin-bottom: 2mm;
+    }
+    .doc-meta .tag strong{ color: var(--lac-teal); }
+
+    .hero{
+      display:grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 8mm;
+      align-items: start;
+      margin-top: 2mm;
+    }
+
+    h1{
+      margin:0;
+      font-size: 24pt;
+      letter-spacing: .2px;
+      color: var(--lac-teal);
+      line-height:1.05;
+    }
+    .subtitle{
+      margin-top: 2mm;
+      font-size: 12pt;
+      color: var(--muted);
+      font-family: Arial, sans-serif;
+      line-height: 1.35;
+    }
+
+    .quote{
+      border-left: 3px solid var(--lac-teal-2);
+      padding-left: 4mm;
+      margin-top: 4mm;
+      color: var(--ink);
+      font-style: italic;
+      font-size: 12pt;
+      line-height: 1.4;
+    }
+
+    .card{
+      border: 1px solid var(--line);
+      border-radius: 4mm;
+      padding: 6mm;
+      background: #fff;
+    }
+
+    .card .kicker{
+      font-family: Arial, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-size: 8.8pt;
+      color: var(--light);
+      margin-bottom: 2mm;
+    }
+
+    .pill{
+      display:inline-block;
+      padding: 2mm 3.2mm;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-family: Arial, sans-serif;
+      font-size: 9.5pt;
+      color: var(--muted);
+      margin: 1mm 1mm 0 0;
+      white-space: nowrap;
+    }
+    .pill b{ color: var(--lac-teal); }
+
+    .section{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8mm;
+    }
+
+    h2{
+      margin:0 0 3mm 0;
+      font-size: 14pt;
+      color: var(--lac-teal);
+      font-family: Arial, sans-serif;
+      letter-spacing: .2px;
+    }
+
+    p{
+      margin:0 0 3mm 0;
+      font-size: 11pt;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+    .muted{ color: var(--muted); }
+    .small{ font-size: 9.5pt; color: var(--muted); }
+
+    ul{ margin: 0; padding-left: 4.5mm; }
+    li{ margin: 0 0 2mm 0; font-size: 11pt; line-height: 1.45; }
+
+    .rewards{
+      width:100%;
+      border-collapse: collapse;
+      margin-top: 2mm;
+      font-family: Arial, sans-serif;
+      font-size: 10.5pt;
+    }
+    .rewards th, .rewards td{
+      border-bottom: 1px solid var(--line);
+      padding: 2.8mm 2mm;
+      vertical-align: top;
+    }
+    .rewards th{
+      text-align:left;
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 9.5pt;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .rewards td strong{ color: var(--lac-teal); }
+
+    .badge{
+      display:inline-block;
+      border: 1px solid var(--lac-teal-2);
+      color: var(--lac-teal);
+      padding: 1.4mm 2.4mm;
+      border-radius: 2.5mm;
+      font-size: 9pt;
+      font-weight: 700;
+      letter-spacing: .02em;
+    }
+    .badge.gold{
+      border-color: var(--lac-gold);
+      color: #8a5b00;
+    }
+
+    .two-col{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8mm;
+    }
+
+    .steps{
+      counter-reset: step;
+      margin:0;
+      padding:0;
+      list-style:none;
+    }
+    .steps li{
+      counter-increment: step;
+      padding: 3mm 0;
+      border-bottom: 1px dashed var(--line);
+      margin:0;
+    }
+    .steps li:last-child{ border-bottom: none; }
+    .steps li .stepnum{
+      display:inline-flex;
+      width: 7mm; height: 7mm;
+      border-radius: 50%;
+      border: 1px solid var(--lac-teal-2);
+      align-items:center;
+      justify-content:center;
+      font-family: Arial, sans-serif;
+      font-weight: 700;
+      color: var(--lac-teal);
+      margin-right: 3mm;
+      font-size: 10pt;
+    }
+    .steps li .steptxt{
+      font-size: 11pt;
+      line-height: 1.45;
+      display:inline;
+    }
+
+    .callout{
+      border: 1px solid var(--line);
+      border-radius: 4mm;
+      padding: 6mm;
+      background: var(--bg-soft);
+    }
+    .callout h3{
+      margin: 0 0 2mm 0;
+      font-family: Arial, sans-serif;
+      font-size: 12pt;
+      color: var(--lac-teal);
+    }
+    .callout p{ margin:0; color: var(--muted); }
+
+    .footer{
+      margin-top: auto;
+      padding-top: 5mm;
+      border-top: 1px solid var(--line);
+      display:flex;
+      justify-content: space-between;
+      align-items:flex-end;
+      gap: 6mm;
+      font-family: Arial, sans-serif;
+      color: var(--muted);
+      font-size: 9.5pt;
+      line-height: 1.3;
+    }
+
+    .qrbox{
+      width: 26mm;
+      height: 26mm;
+      border: 1px solid var(--line);
+      border-radius: 3mm;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color: var(--light);
+      font-size: 9pt;
+      text-align:center;
+      padding: 2mm;
+    }
   </style>
 </head>
+
 <body>
-<p class="p1">&lt;!doctype html&gt;</p>
-<p class="p1">&lt;html lang="mn"&gt;</p>
-<p class="p1">&lt;head&gt;</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;meta charset="utf-8" /&gt;</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;meta name="viewport" content="width=device-width,initial-scale=1" /&gt;</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;title&gt;LAC Subscription A4 (Front + Back)&lt;/title&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;style&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>@page { size: A4; margin: 12mm; }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>:root{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--lac-teal: #004F59;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--lac-teal-2: #008EAA;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--lac-gold: #FFB81C;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--ink: #111;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--muted: #444;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--light: #666;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--line: #D6D6D6;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>--bg-soft: #F7F9FA;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>*{ box-sizing: border-box; }</p>
-<p class="p1"><span class="Apple-converted-space">    </span>html, body{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin:0; padding:0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--ink);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: "Cambria", "Georgia", "Times New Roman", serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>-webkit-print-color-adjust: exact;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>print-color-adjust: exact;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.page{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>page-break-after: always;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>position: relative;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>min-height: calc(297mm - 24mm);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display: flex;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>flex-direction: column;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>gap: 10mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.page:last-child{ page-break-after: auto; }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.topbar{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:flex;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>align-items:flex-start;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>justify-content: space-between;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>gap: 8mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding-bottom: 5mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-bottom: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.logo{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>width: 42mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>height: 14mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 3mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:flex;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>align-items:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>justify-content:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-weight:700;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>letter-spacing: .06em;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--lac-teal);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 12pt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.doc-meta{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>text-align:right;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height: 1.2;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--muted);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9.5pt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.doc-meta .tag{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:inline-block;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 1.5mm 3mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 999px;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-bottom: 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.doc-meta .tag strong{ color: var(--lac-teal); }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.hero{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:grid;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>grid-template-columns: 1.2fr .8fr;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>gap: 8mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>align-items: start;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-top: 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>h1{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin:0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 24pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>letter-spacing: .2px;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--lac-teal);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height:1.05;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.subtitle{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-top: 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 12pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--muted);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height: 1.35;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.quote{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-left: 3px solid var(--lac-teal-2);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding-left: 4mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-top: 4mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--ink);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-style: italic;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 12pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height: 1.4;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.card{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 4mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 6mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>background: #fff;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.card .kicker{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>text-transform: uppercase;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>letter-spacing: .12em;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 8.8pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--light);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-bottom: 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.pill{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:inline-block;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 2mm 3.2mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 999px;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9.5pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--muted);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin: 1mm 1mm 0 0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>white-space: nowrap;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.pill b{ color: var(--lac-teal); }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.section{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:grid;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>grid-template-columns: 1fr 1fr;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>gap: 8mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>h2{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin:0 0 3mm 0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 14pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--lac-teal);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>letter-spacing: .2px;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>p{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin:0 0 3mm 0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 11pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height: 1.5;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--ink);</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.muted{ color: var(--muted); }</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.small{ font-size: 9.5pt; color: var(--muted); }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>ul{ margin: 0; padding-left: 4.5mm; }</p>
-<p class="p1"><span class="Apple-converted-space">    </span>li{ margin: 0 0 2mm 0; font-size: 11pt; line-height: 1.45; }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.rewards{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>width:100%;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-collapse: collapse;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-top: 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 10.5pt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.rewards th, .rewards td{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-bottom: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 2.8mm 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>vertical-align: top;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.rewards th{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>text-align:left;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--muted);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-weight: 700;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9.5pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>letter-spacing: .08em;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>text-transform: uppercase;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.rewards td strong{ color: var(--lac-teal); }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.badge{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:inline-block;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--lac-teal-2);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--lac-teal);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 1.4mm 2.4mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 2.5mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-weight: 700;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>letter-spacing: .02em;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.badge.gold{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-color: var(--lac-gold);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: #8a5b00;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.two-col{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:grid;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>grid-template-columns: 1fr 1fr;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>gap: 8mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.steps{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>counter-reset: step;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin:0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding:0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>list-style:none;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.steps li{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>counter-increment: step;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 3mm 0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-bottom: 1px dashed var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin:0;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.steps li:last-child{ border-bottom: none; }</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.steps li .stepnum{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:inline-flex;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>width: 7mm; height: 7mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 50%;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--lac-teal-2);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>align-items:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>justify-content:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-weight: 700;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--lac-teal);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-right: 3mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 10pt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.steps li .steptxt{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 11pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height: 1.45;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:inline;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.callout{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 4mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 6mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>background: var(--bg-soft);</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.callout h3{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin: 0 0 2mm 0;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 12pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--lac-teal);</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">    </span>.callout p{ margin:0; color: var(--muted); }</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.footer{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>margin-top: auto;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding-top: 5mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-top: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:flex;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>justify-content: space-between;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>align-items:flex-end;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>gap: 6mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-family: Arial, sans-serif;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--muted);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9.5pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>line-height: 1.3;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>.qrbox{</p>
-<p class="p1"><span class="Apple-converted-space">      </span>width: 26mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>height: 26mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border: 1px solid var(--line);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>border-radius: 3mm;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>display:flex;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>align-items:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>justify-content:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>color: var(--light);</p>
-<p class="p1"><span class="Apple-converted-space">      </span>font-size: 9pt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>text-align:center;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>padding: 2mm;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>}</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;/style&gt;</p>
-<p class="p1">&lt;/head&gt;</p>
-<p class="p2"><br></p>
-<p class="p1">&lt;body&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;!-- PAGE 1 (FRONT) --&gt;</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;section class="page"&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;header class="topbar"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="logo"&gt;LAC&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="doc-meta"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="tag"&gt;&lt;strong&gt;Subscription&lt;/strong&gt; | Customer Guide&lt;/div&gt;&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>Эрүүл мэнддээ хийж буй ухаалаг хөрөнгө оруулалт&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;span class="small"&gt;A4 • Front&lt;/span&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/header&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;div class="hero"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;h1&gt;LAC Subscription&lt;br/&gt;Хөтөлбөр&lt;/h1&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="subtitle"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>Эрүүл мэнд бол зардал биш.&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;b&gt;Энэ бол хамгийн үнэ цэнтэй хөрөнгө.&lt;/b&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="quote"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>LAC Subscription бол таны тогтвортой хөрөнгө оруулалтыг</p>
-<p class="p1"><span class="Apple-converted-space">          </span>илүү үнэ цэнтэй болгох арга.</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div style="margin-top:5mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;span class="pill"&gt;&lt;b&gt;Сануулах&lt;/b&gt; • зөв цагт&lt;/span&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;span class="pill"&gt;&lt;b&gt;Дэмжих&lt;/b&gt; • тогтвортой хэрэглээ&lt;/span&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;span class="pill"&gt;&lt;b&gt;Өгөөж&lt;/b&gt; • илүү ашигтай үргэлжлэл&lt;/span&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;aside class="card"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="kicker"&gt;Subscription гэж юу вэ?&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p&gt;&lt;b&gt;Сар бүр автоматаар мөнгө татах систем биш.&lt;/b&gt;&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p class="muted"&gt;Таны бүтээгдэхүүний бодит хэрэглээний хугацаанд тулгуурласан систем. Энэ нь:&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;ul&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;Зөв цагт сануулах&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;Тогтвортой хэрэглээг дэмжих&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;Илүү ашигтайгаар үргэлжлүүлэх боломж олгох&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/ul&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p style="margin-top:3mm;"&gt;&lt;b&gt;Бид танд сануулна.&lt;/b&gt; Шийдвэрийг та өөрөө гаргана.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/aside&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;div class="section"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="card"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;h2&gt;Тогтвортой байдлын шагнал&lt;/h2&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p class="muted"&gt;Эрүүл мэнддээ тууштай анхаарч буй таныг LAC урамшуулна.&lt;/p&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;table class="rewards" aria-label="Rewards"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;thead&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;th style="width:22%;"&gt;Цикл&lt;/th&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;th style="width:18%;"&gt;Хөнгөлөлт&lt;/th&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;th&gt;Утга&lt;/th&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;/tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;/thead&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;tbody&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;span class="badge"&gt;1-р цикл&lt;/span&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;strong&gt;5%&lt;/strong&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;Эхний алхам.&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;/tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;span class="badge"&gt;2-р цикл&lt;/span&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;strong&gt;10%&lt;/strong&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;Тогтвортой байдлын эхлэл.&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;/tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;span class="badge"&gt;3-р цикл&lt;/span&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;strong&gt;15%&lt;/strong&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;Хөрөнгө оруулалт үр дүнгээ өгч эхэлнэ.&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;/tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;span class="badge gold"&gt;4-р цикл&lt;/span&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;strong&gt;45%&lt;/strong&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;Таны тууштай байдлыг LAC хамгийн өндөр үнэлэх мөч.&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;/tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;span class="badge"&gt;5-р цикл+&lt;/span&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;&lt;strong&gt;20%&lt;/strong&gt;&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">              </span>&lt;td&gt;Урт хугацааны урамшуулал.&lt;/td&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;/tr&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;/tbody&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/table&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p style="margin-top:3mm;"&gt;&lt;b&gt;Тогтвортой хэрэглээ = Илүү өндөр үнэ цэнэ.&lt;/b&gt;&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="card"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;h2&gt;Уян хатан сонголт&lt;/h2&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p class="muted"&gt;Амьдрал өөрчлөгдөнө. Биеийн хэрэгцээ ч мөн адил.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p&gt;Та цикл бүр дээр ижил ангиллын бүтээгдэхүүнээс &lt;b&gt;анхны үнийн ±10%&lt;/b&gt;-ийн хүрээнд сонголтоо өөрчлөх боломжтой.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p&gt;&lt;b&gt;Subscription бол хязгаарлалт биш.&lt;/b&gt;&lt;br/&gt;Харин таныг дэмжих бүтэц.&lt;/p&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div style="margin-top:5mm; border-top:1px solid var(--line); padding-top:4mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;h2 style="margin-bottom:2mm;"&gt;Товч зарчим&lt;/h2&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p style="margin:0;"&gt;&lt;b&gt;Эрүүл мэндийн хяналт таны гарт байх ёстой.&lt;/b&gt;&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>Бид таныг тасралтгүй дэмжихийн тулд энэ хөтөлбөрийг бүтээсэн.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;footer class="footer"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;b&gt;LAC Subscription&lt;/b&gt;&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>Эрүүл мэндийг тасалдуулахгүй, үнэ цэнийг өсгөнө.</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="small" style="text-align:right;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;b&gt;Store / Contact:&lt;/b&gt; ___________________&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;b&gt;Phone:&lt;/b&gt; ___________________</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/footer&gt;</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;/section&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;!-- PAGE 2 (BACK) --&gt;</p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;section class="page"&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;header class="topbar"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="logo"&gt;LAC&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="doc-meta"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="tag"&gt;&lt;strong&gt;Subscription&lt;/strong&gt; | How it works&lt;/div&gt;&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>Энгийн • Ойлгомжтой • Уян хатан&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;span class="small"&gt;A4 • Back&lt;/span&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/header&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;div class="two-col"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="card"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;h2&gt;Цикл хэрхэн тооцогдох вэ?&lt;/h2&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p class="muted"&gt;Бид хуанлийн сараар биш, &lt;b&gt;бодит хэрэглээгээр&lt;/b&gt; тооцно.&lt;/p&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="callout" style="margin-top:4mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;h3&gt;Жишээ&lt;/h3&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p&gt;30 хоногийн хэрэглээтэй бүтээгдэхүүн бол 30 дахь өдөр таны дараагийн сануулгын хугацаа болно.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div style="margin-top:5mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p style="margin-bottom:2mm;"&gt;&lt;b&gt;Товчхондоо:&lt;/b&gt;&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;ul&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;li&gt;Хэтэрхий эрт биш&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;li&gt;Хэтэрхий орой биш&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>&lt;li&gt;Таны хэрэглээнд яг тохирсон&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;/ul&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p style="margin-top:3mm;"&gt;&lt;b&gt;Энэ нь таны хөрөнгө оруулалт тасалдахгүй байх баталгаа юм.&lt;/b&gt;&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="card"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;h2&gt;Хөтөлбөрт хамрагдсаны дараа&lt;/h2&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;p class="muted"&gt;Алхам бүр ойлгомжтой, дарамтгүй.&lt;/p&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;ol class="steps" aria-label="Steps"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;&lt;span class="stepnum"&gt;1&lt;/span&gt;&lt;span class="steptxt"&gt;Та бүтээгдэхүүнээ сонгож, Subscription-д бүртгүүлнэ.&lt;/span&gt;&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;&lt;span class="stepnum"&gt;2&lt;/span&gt;&lt;span class="steptxt"&gt;Бид таны хэрэглээний хугацаанд тулгуурлан сануулна.&lt;/span&gt;&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;&lt;span class="stepnum"&gt;3&lt;/span&gt;&lt;span class="steptxt"&gt;Та хүсвэл цикл бүрт ижил ангиллын бүтээгдэхүүнээ ±10% дотор уян хатан сольж болно.&lt;/span&gt;&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;li&gt;&lt;span class="stepnum"&gt;4&lt;/span&gt;&lt;span class="steptxt"&gt;Таны тууштай байдлыг үе шаттай хөнгөлөлтөөр урамшуулна.&lt;/span&gt;&lt;/li&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/ol&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="callout" style="margin-top:5mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;h3&gt;Бидний зарчим&lt;/h3&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p&gt;&lt;b&gt;LAC таныг байнга худалдан авагч биш, урт хугацааны түнш гэж хардаг.&lt;/b&gt;&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p style="margin-top:2mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>Subscription нь богино хугацааны хямдрал хайдаг хүмүүст зориулагдаагүй.&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>Энэ нь урт хугацааны үр дүнг эрхэмлэдэг хүмүүст зориулагдсан.</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;div class="card" style="margin-top:8mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;h2&gt;Тодорхой, шударга, дарамтгүй&lt;/h2&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div class="two-col" style="gap:6mm;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p&gt;&lt;b&gt;Бид автоматаар төлбөр авахгүй.&lt;/b&gt;&lt;br/&gt;Бид зөвхөн сануулна.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p&gt;&lt;b&gt;Бид дарамт үүсгэхгүй.&lt;/b&gt;&lt;br/&gt;Шийдвэрийг та өөрөө гаргана.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p&gt;&lt;b&gt;Та эрүүл мэнддээ хөрөнгө оруулж байна.&lt;/b&gt;&lt;br/&gt;Бид таныг илүү ашигтайгаар дэмжинэ.&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;p class="muted small" style="margin:0;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">            </span>*Энэ материал нь мэдээллийн зорилготой. Хөтөлбөрийн нарийвчилсан нөхцөлийг салбараас лавлана уу.</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;/p&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/div&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;footer class="footer"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;b&gt;LAC Subscription&lt;/b&gt;&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>Эрүүл мэндийг тасалдуулахгүй, үнэ цэнийг өсгөнө.</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;div style="display:flex; gap:5mm; align-items:flex-end;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="qrbox"&gt;QR / Link&lt;br/&gt;энд&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;div class="small" style="text-align:right;"&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;b&gt;Instagram:&lt;/b&gt; ___________________&lt;br/&gt;</p>
-<p class="p1"><span class="Apple-converted-space">          </span>&lt;b&gt;Website:&lt;/b&gt; ___________________</p>
-<p class="p1"><span class="Apple-converted-space">        </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">      </span>&lt;/div&gt;</p>
-<p class="p1"><span class="Apple-converted-space">    </span>&lt;/footer&gt;</p>
-<p class="p2"><br></p>
-<p class="p1"><span class="Apple-converted-space">  </span>&lt;/section&gt;</p>
-<p class="p2"><br></p>
-<p class="p1">&lt;/body&gt;</p>
-<p class="p1">&lt;/html&gt;</p>
+
+  <!-- PAGE 1 (FRONT) -->
+  <section class="page">
+
+    <header class="topbar">
+      <div class="logo">LAC</div>
+      <div class="doc-meta">
+        <div class="tag"><strong>Subscription</strong> | Customer Guide</div><br/>
+        Эрүүл мэнддээ хийж буй ухаалаг хөрөнгө оруулалт<br/>
+        <span class="small">A4 • Front</span>
+      </div>
+    </header>
+
+    <div class="hero">
+      <div>
+        <h1>LAC Subscription<br/>Хөтөлбөр</h1>
+        <div class="subtitle">
+          Эрүүл мэнд бол зардал биш.<br/>
+          <b>Энэ бол хамгийн үнэ цэнтэй хөрөнгө.</b>
+        </div>
+
+        <div class="quote">
+          LAC Subscription бол таны тогтвортой хөрөнгө оруулалтыг
+          илүү үнэ цэнтэй болгох арга.
+        </div>
+
+        <div style="margin-top:5mm;">
+          <span class="pill"><b>Сануулах</b> • зөв цагт</span>
+          <span class="pill"><b>Дэмжих</b> • тогтвортой хэрэглээ</span>
+          <span class="pill"><b>Өгөөж</b> • илүү ашигтай үргэлжлэл</span>
+        </div>
+      </div>
+
+      <aside class="card">
+        <div class="kicker">Subscription гэж юу вэ?</div>
+        <p><b>Сар бүр автоматаар мөнгө татах систем биш.</b></p>
+        <p class="muted">Таны бүтээгдэхүүний бодит хэрэглээний хугацаанд тулгуурласан систем. Энэ нь:</p>
+        <ul>
+          <li>Зөв цагт сануулах</li>
+          <li>Тогтвортой хэрэглээг дэмжих</li>
+          <li>Илүү ашигтайгаар үргэлжлүүлэх боломж олгох</li>
+        </ul>
+        <p style="margin-top:3mm;"><b>Бид танд сануулна.</b> Шийдвэрийг та өөрөө гаргана.</p>
+      </aside>
+    </div>
+
+    <div class="section">
+      <div class="card">
+        <h2>Тогтвортой байдлын шагнал</h2>
+        <p class="muted">Эрүүл мэнддээ тууштай анхаарч буй таныг LAC урамшуулна.</p>
+
+        <table class="rewards" aria-label="Rewards">
+          <thead>
+            <tr>
+              <th style="width:22%;">Цикл</th>
+              <th style="width:18%;">Хөнгөлөлт</th>
+              <th>Утга</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge">1-р цикл</span></td>
+              <td><strong>5%</strong></td>
+              <td>Эхний алхам.</td>
+            </tr>
+            <tr>
+              <td><span class="badge">2-р цикл</span></td>
+              <td><strong>10%</strong></td>
+              <td>Тогтвортой байдлын эхлэл.</td>
+            </tr>
+            <tr>
+              <td><span class="badge">3-р цикл</span></td>
+              <td><strong>15%</strong></td>
+              <td>Хөрөнгө оруулалт үр дүнгээ өгч эхэлнэ.</td>
+            </tr>
+            <tr>
+              <td><span class="badge gold">4-р цикл</span></td>
+              <td><strong>45%</strong></td>
+              <td>Таны тууштай байдлыг LAC хамгийн өндөр үнэлэх мөч.</td>
+            </tr>
+            <tr>
+              <td><span class="badge">5-р цикл+</span></td>
+              <td><strong>20%</strong></td>
+              <td>Урт хугацааны урамшуулал.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p style="margin-top:3mm;"><b>Тогтвортой хэрэглээ = Илүү өндөр үнэ цэнэ.</b></p>
+      </div>
+
+      <div class="card">
+        <h2>Уян хатан сонголт</h2>
+        <p class="muted">Амьдрал өөрчлөгдөнө. Биеийн хэрэгцээ ч мөн адил.</p>
+        <p>Та цикл бүр дээр ижил ангиллын бүтээгдэхүүнээс <b>анхны үнийн ±10%</b>-ийн хүрээнд сонголтоо өөрчлөх боломжтой.</p>
+        <p><b>Subscription бол хязгаарлалт биш.</b><br/>Харин таныг дэмжих бүтэц.</p>
+
+        <div style="margin-top:5mm; border-top:1px solid var(--line); padding-top:4mm;">
+          <h2 style="margin-bottom:2mm;">Товч зарчим</h2>
+          <p style="margin:0;"><b>Эрүүл мэндийн хяналт таны гарт байх ёстой.</b><br/>
+          Бид таныг тасралтгүй дэмжихийн тулд энэ хөтөлбөрийг бүтээсэн.</p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div>
+        <b>LAC Subscription</b><br/>
+        Эрүүл мэндийг тасалдуулахгүй, үнэ цэнийг өсгөнө.
+      </div>
+      <div class="small" style="text-align:right;">
+        <b>Store / Contact:</b> ___________________<br/>
+        <b>Phone:</b> ___________________
+      </div>
+    </footer>
+  </section>
+
+  <!-- PAGE 2 (BACK) -->
+  <section class="page">
+
+    <header class="topbar">
+      <div class="logo">LAC</div>
+      <div class="doc-meta">
+        <div class="tag"><strong>Subscription</strong> | How it works</div><br/>
+        Энгийн • Ойлгомжтой • Уян хатан<br/>
+        <span class="small">A4 • Back</span>
+      </div>
+    </header>
+
+    <div class="two-col">
+      <div class="card">
+        <h2>Цикл хэрхэн тооцогдох вэ?</h2>
+        <p class="muted">Бид хуанлийн сараар биш, <b>бодит хэрэглээгээр</b> тооцно.</p>
+
+        <div class="callout" style="margin-top:4mm;">
+          <h3>Жишээ</h3>
+          <p>30 хоногийн хэрэглээтэй бүтээгдэхүүн бол 30 дахь өдөр таны дараагийн сануулгын хугацаа болно.</p>
+        </div>
+
+        <div style="margin-top:5mm;">
+          <p style="margin-bottom:2mm;"><b>Товчхондоо:</b></p>
+          <ul>
+            <li>Хэтэрхий эрт биш</li>
+            <li>Хэтэрхий орой биш</li>
+            <li>Таны хэрэглээнд яг тохирсон</li>
+          </ul>
+          <p style="margin-top:3mm;"><b>Энэ нь таны хөрөнгө оруулалт тасалдахгүй байх баталгаа юм.</b></p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Хөтөлбөрт хамрагдсаны дараа</h2>
+        <p class="muted">Алхам бүр ойлгомжтой, дарамтгүй.</p>
+
+        <ol class="steps" aria-label="Steps">
+          <li><span class="stepnum">1</span><span class="steptxt">Та бүтээгдэхүүнээ сонгож, Subscription-д бүртгүүлнэ.</span></li>
+          <li><span class="stepnum">2</span><span class="steptxt">Бид таны хэрэглээний хугацаанд тулгуурлан сануулна.</span></li>
+          <li><span class="stepnum">3</span><span class="steptxt">Та хүсвэл цикл бүрт ижил ангиллын бүтээгдэхүүнээ ±10% дотор уян хатан сольж болно.</span></li>
+          <li><span class="stepnum">4</span><span class="steptxt">Таны тууштай байдлыг үе шаттай хөнгөлөлтөөр урамшуулна.</span></li>
+        </ol>
+
+        <div class="callout" style="margin-top:5mm;">
+          <h3>Бидний зарчим</h3>
+          <p><b>LAC таныг байнга худалдан авагч биш, урт хугацааны түнш гэж хардаг.</b></p>
+          <p style="margin-top:2mm;">
+            Subscription нь богино хугацааны хямдрал хайдаг хүмүүст зориулагдаагүй.<br/>
+            Энэ нь урт хугацааны үр дүнг эрхэмлэдэг хүмүүст зориулагдсан.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:8mm;">
+      <h2>Тодорхой, шударга, дарамтгүй</h2>
+      <div class="two-col" style="gap:6mm;">
+        <div>
+          <p><b>Бид автоматаар төлбөр авахгүй.</b><br/>Бид зөвхөн сануулна.</p>
+          <p><b>Бид дарамт үүсгэхгүй.</b><br/>Шийдвэрийг та өөрөө гаргана.</p>
+        </div>
+        <div>
+          <p><b>Та эрүүл мэнддээ хөрөнгө оруулж байна.</b><br/>Бид таныг илүү ашигтайгаар дэмжинэ.</p>
+          <p class="muted small" style="margin:0;">
+            *Энэ материал нь мэдээллийн зорилготой. Хөтөлбөрийн нарийвчилсан нөхцөлийг салбараас лавлана уу.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div>
+        <b>LAC Subscription</b><br/>
+        Эрүүл мэндийг тасалдуулахгүй, үнэ цэнийг өсгөнө.
+      </div>
+      <div style="display:flex; gap:5mm; align-items:flex-end;">
+        <div class="qrbox">QR / Link<br/>энд</div>
+        <div class="small" style="text-align:right;">
+          <b>Instagram:</b> ___________________<br/>
+          <b>Website:</b> ___________________
+        </div>
+      </div>
+    </footer>
+
+  </section>
+
 </body>
 </html>
